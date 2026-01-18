@@ -112,6 +112,7 @@ Frontend runs at http://localhost:5173
 
 ### Meal Analysis
 - `POST /analyze/meal` - Analyze meal photo (orchestrates all agents)
+- `POST /analyze/barcode` - Quick barcode scan for packaged foods
 - `GET /analyze/history` - Get meal history (paginated)
 - `GET /analyze/meal/{id}` - Get detailed analysis for specific meal
 
@@ -135,13 +136,37 @@ Frontend runs at http://localhost:5173
 
 **DailyBalances**: User reference, date, calorie ranges, balance status, reasoning
 
+## Food Database
+
+The application uses a dual-source food database with intelligent fallback:
+
+**Primary Source**: USDA FDC (raw ingredients, verified data)
+- Comprehensive nutrition data for unprocessed foods
+- Reliable baseline for macro calculations
+- Free API with key registration
+
+**Fallback Source**: Open Food Facts (packaged foods, barcodes)
+- 2.5M+ packaged food products
+- Barcode lookup (EAN/UPC)
+- Community-maintained, constantly updated
+- No API key required
+
+**Lookup Chain**:
+1. Try USDA FDC by food name (raw ingredients)
+2. If not found, try Open Food Facts by name (packaged foods)
+3. If barcode provided, direct Open Food Facts barcode lookup
+4. Results cached for 7 days to reduce API calls
+
+This approach ensures coverage for both raw ingredients and packaged foods while maintaining data quality.
+
 ## Meal Analysis Flow
 
+**Photo Analysis**:
 1. User uploads image via frontend
 2. Frontend converts to base64, sends to `/analyze/meal`
 3. Backend orchestrator chains agents:
    - Vision Interpreter identifies foods and portions
-   - Nutrition Reasoner calculates calorie ranges using USDA FDC data
+   - Nutrition Reasoner calculates calorie ranges (queries USDA FDC, falls back to Open Food Facts)
    - Personalization Agent contextualizes with user profile and daily meals
    - Wellness Coach generates supportive feedback with safety checks
    - Advanced agents provide drift detection, next actions, strategy adaptation
@@ -150,6 +175,13 @@ Frontend runs at http://localhost:5173
 6. Response sent to frontend with foods, calorie ranges, balance status, message, suggestions
 7. User provides feedback (accurate/portion_bigger/etc.)
 8. Feedback logged to Opik for model improvement
+
+**Barcode Scanning**:
+1. User scans barcode via frontend
+2. Frontend sends barcode to `/analyze/barcode`
+3. Backend queries Open Food Facts directly
+4. Returns product name, nutrition data, brands
+5. User can quickly log packaged foods without photo analysis
 
 ## Configuration
 

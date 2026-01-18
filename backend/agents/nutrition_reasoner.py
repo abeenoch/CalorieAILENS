@@ -60,22 +60,25 @@ You must ALWAYS respond with valid JSON in this exact format:
 
 Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
     
-    async def _lookup_fdc_data(self, food_name: str) -> Dict:
+    async def _lookup_fdc_data(self, food_name: str, barcode: str = None) -> Dict:
         """
-        Look up verified nutrition data from USDA FDC.
+        Look up verified nutrition data from USDA FDC or Open Food Facts.
+        
+        Tries USDA FDC first (raw ingredients), then Open Food Facts (packaged foods).
         
         Args:
             food_name: Name of the food to look up
+            barcode: Optional barcode for direct lookup
             
         Returns:
-            FDC nutrition data or empty dict if not found
+            Nutrition data or empty dict if not found
         """
         try:
-            fdc_data = await FDCNutritionService.search_food(food_name)
-            if fdc_data:
-                return fdc_data
+            nutrition_data = await FDCNutritionService.search_food(food_name, barcode)
+            if nutrition_data:
+                return nutrition_data
         except Exception as e:
-            print(f"FDC lookup error for '{food_name}': {str(e)}")
+            print(f"Food database lookup error for '{food_name}': {str(e)}")
         
         return {}
     
@@ -100,34 +103,36 @@ Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
                 "per_food_breakdown": []
             }
         
-        # Look up FDC data for each food item
-        fdc_lookups = {}
+        # Look up nutrition data for each food item
+        nutrition_lookups = {}
         food_descriptions = []
         
         for food in foods:
-            fdc_data = await self._lookup_fdc_data(food['name'])
-            if fdc_data:
-                fdc_lookups[food['name']] = fdc_data
-                nutrition = fdc_data.get('nutrition', {})
+            barcode = food.get('barcode')  # If vision detected a barcode
+            nutrition_data = await self._lookup_fdc_data(food['name'], barcode)
+            if nutrition_data:
+                nutrition_lookups[food['name']] = nutrition_data
+                nutrition = nutrition_data.get('nutrition', {})
+                source = nutrition_data.get('source', 'Unknown')
                 food_desc = f"- {food['name']}: {food['portion']} (confidence: {food['confidence']})"
                 if nutrition.get('calories'):
-                    food_desc += f" [FDC verified: {nutrition['calories']}kcal per serving]"
+                    food_desc += f" [{source}: {nutrition['calories']}kcal per serving]"
                 food_descriptions.append(food_desc)
             else:
                 food_descriptions.append(
                     f"- {food['name']}: {food['portion']} (confidence: {food['confidence']})"
                 )
         
-        # Build enhanced prompt with FDC data
+        # Build enhanced prompt with verified data
         food_list = "\n".join(food_descriptions)
         
-        fdc_note = ""
-        if fdc_lookups:
-            fdc_note = "\n\nNote: Some foods have verified nutrition data from USDA FDC (marked above). Use this as baseline for more accurate estimates."
+        data_note = ""
+        if nutrition_lookups:
+            data_note = "\n\nNote: Some foods have verified nutrition data from USDA FDC or Open Food Facts (marked above). Use this as baseline for more accurate estimates."
         
         prompt = f"""Analyze these food items and estimate their nutritional content:
 
-{food_list}{fdc_note}
+{food_list}{data_note}
 
 Consider the portion sizes and provide calorie and macro ranges. Respond with JSON only."""
         

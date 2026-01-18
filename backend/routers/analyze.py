@@ -9,6 +9,7 @@ from models import User, Meal
 from schemas import MealAnalysisRequest, MealAnalysisResponse, MealHistoryItem
 from auth import get_current_user
 from agents import MealAnalysisOrchestrator
+from services.fdc_service import FDCNutritionService
 
 router = APIRouter(prefix="/analyze", tags=["Meal Analysis"])
 
@@ -54,8 +55,32 @@ async def analyze_meal(
         for meal in today_meals
     ]
     
+    # Get historical meals (last 30 days) for drift detection
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    result = await db.execute(
+        select(Meal).where(
+            and_(
+                Meal.user_id == current_user.id,
+                Meal.created_at >= thirty_days_ago
+            )
+        ).order_by(Meal.created_at)
+    )
+    historical_meals = result.scalars().all()
+    
+    # Build historical meals for drift detector
+    historical_meals_data = [
+        {
+            "nutrition_result": meal.nutrition_result,
+            "vision_result": meal.vision_result,
+            "created_at": meal.created_at.isoformat(),
+            "context": meal.context
+        }
+        for meal in historical_meals
+    ]
+    
     # Build user profile dict
     user_profile = {
+        "id": current_user.id,
         "age_range": current_user.age_range,
         "height_range": current_user.height_range,
         "weight_range": current_user.weight_range,
@@ -70,7 +95,8 @@ async def analyze_meal(
             image_mime_type=request.image_mime_type,
             context=request.context,
             user_profile=user_profile,
-            daily_meals_so_far=daily_meals_so_far
+            daily_meals_so_far=daily_meals_so_far,
+            historical_meals=historical_meals_data
         )
     except Exception as e:
         raise HTTPException(
@@ -124,6 +150,50 @@ async def analyze_meal(
         confidence_score=analysis.get("confidence_score", "medium"),
         created_at=new_meal.created_at
     )
+
+
+@router.post("/barcode")
+async def scan_barcode(
+    barcode: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Quick barcode scan for packaged foods.
+    
+    This endpoint:
+    1. Accepts a barcode (EAN/UPC)
+    2. Looks up product in Open Food Facts
+    3. Returns nutrition data without full multi-agent analysis
+    4. Allows quick logging of packaged foods
+    
+    Returns nutrition data or 404 if barcode not found.
+    """
+    try:
+        nutrition_data = await FDCNutritionService._search_open_food_facts_by_barcode(barcode)
+        
+        if not nutrition_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with barcode {barcode} not found"
+            )
+        
+        return {
+            "barcode": barcode,
+            "product_name": nutrition_data.get("food_name"),
+            "brands": nutrition_data.get("brands", ""),
+            "nutrition": nutrition_data.get("nutrition", {}),
+            "serving_size": nutrition_data.get("serving_size"),
+            "serving_unit": nutrition_data.get("serving_unit"),
+            "source": nutrition_data.get("source")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Barcode lookup failed: {str(e)}"
+        )
 
 
 @router.get("/history", response_model=List[MealHistoryItem])

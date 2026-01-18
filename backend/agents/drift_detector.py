@@ -99,8 +99,23 @@ Focus on user wellbeing, not judgment."""
         """Analyze meal patterns from historical data."""
         patterns = {}
         
+        if not meals:
+            return patterns
+        
+        # Extract unique dates from meals to calculate actual days tracked
+        meal_dates = set()
+        for m in meals:
+            try:
+                created_at = m.get("created_at", "")
+                if created_at:
+                    meal_date = created_at.split("T")[0]
+                    meal_dates.add(meal_date)
+            except:
+                pass
+        
+        actual_days_tracked = len(meal_dates) if meal_dates else 1
+        
         # Meal frequency by meal type
-        # Extract time from either "time" field or "created_at" field
         meal_times = []
         for m in meals:
             time_str = m.get("time") or m.get("created_at", "")
@@ -110,12 +125,19 @@ Focus on user wellbeing, not judgment."""
         meal_counts = Counter(meal_times)
         patterns["meal_frequency"] = dict(meal_counts)
         
-        # Meal skipping
-        expected_meals_per_day = 3
-        meals_logged_per_day = len(meals) / max(days, 1)
-        skipped_meals = max(0, (expected_meals_per_day * days) - len(meals))
-        patterns["skipped_meals_estimate"] = skipped_meals
-        patterns["logging_frequency"] = meals_logged_per_day
+        # Meal skipping - only calculate if we have enough data (at least 5 days)
+        if actual_days_tracked >= 5:
+            expected_meals_per_day = 3
+            meals_logged_per_day = len(meals) / max(actual_days_tracked, 1)
+            skipped_meals = max(0, (expected_meals_per_day * actual_days_tracked) - len(meals))
+            patterns["skipped_meals_estimate"] = skipped_meals
+            patterns["logging_frequency"] = meals_logged_per_day
+        else:
+            # Not enough data for skipping analysis
+            patterns["skipped_meals_estimate"] = 0
+            patterns["logging_frequency"] = len(meals) / max(actual_days_tracked, 1)
+        
+        patterns["actual_days_tracked"] = actual_days_tracked
         
         # Energy tag analysis
         energy_tags = [m.get("energy_tag") for m in meals if m.get("energy_tag")]
@@ -130,7 +152,7 @@ Focus on user wellbeing, not judgment."""
             avg_time = sum(times) / len(times)
             variance = sum((t - avg_time) ** 2 for t in times) / len(times)
             patterns["timing_variance"] = variance
-            patterns["timing_stability"] = 1.0 - min(variance / 4, 1.0)  # 0-1 scale
+            patterns["timing_stability"] = 1.0 - min(variance / 4, 1.0)
         
         return patterns
     
@@ -139,13 +161,21 @@ Focus on user wellbeing, not judgment."""
         
         drift_signals = []
         
+        # Only analyze drift if user has been tracking for at least 5 days
+        actual_days = patterns.get("actual_days_tracked", 0)
+        if actual_days < 5:
+            return {
+                "detected": False,
+                "reason": f"Insufficient tracking history ({actual_days} days). Need at least 5 days to detect patterns."
+            }
+        
         # Signal 1: Meal skipping pattern
         skipped = patterns.get("skipped_meals_estimate", 0)
         if skipped > 3:
             drift_signals.append({
                 "type": "meal_skipping",
                 "severity": min(skipped / 7, 1.0),
-                "pattern": f"Approximately {int(skipped)} meals skipped in period"
+                "pattern": f"Approximately {int(skipped)} meals skipped in {actual_days} days"
             })
         
         # Signal 2: Logging frequency decline
@@ -187,7 +217,7 @@ Focus on user wellbeing, not judgment."""
             "severity": most_severe["severity"],
             "pattern": most_severe["pattern"],
             "confidence": min(0.95, 0.6 + (most_severe["severity"] * 0.3)),
-            "days_observed": patterns.get("days_observed", 7),
+            "days_observed": actual_days,
             "suggestion": self._suggest_intervention(most_severe["type"])
         }
     
