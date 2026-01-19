@@ -180,8 +180,11 @@ This approach ensures coverage for both raw ingredients and packaged foods while
 1. User scans barcode via frontend
 2. Frontend sends barcode to `/analyze/barcode`
 3. Backend queries Open Food Facts directly
-4. Returns product name, nutrition data, brands
-5. User can quickly log packaged foods without photo analysis
+4. Creates synthetic vision result with verified nutrition data
+5. Runs through personalization and wellness agents
+6. Returns personalized analysis (balance status, supportive message)
+7. Stores in database with full meal record
+8. User gets same personalized experience as photo analysis
 
 ## Configuration
 

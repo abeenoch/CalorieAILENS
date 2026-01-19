@@ -152,24 +152,28 @@ async def analyze_meal(
     )
 
 
-@router.post("/barcode")
+@router.post("/barcode", response_model=MealAnalysisResponse)
 async def scan_barcode(
     barcode: str,
+    context: Optional[str] = None,
+    notes: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Quick barcode scan for packaged foods.
+    Barcode scan with full agent analysis.
     
     This endpoint:
     1. Accepts a barcode (EAN/UPC)
     2. Looks up product in Open Food Facts
-    3. Returns nutrition data without full multi-agent analysis
-    4. Allows quick logging of packaged foods
+    3. Runs through full agent pipeline (personalization, wellness coaching, etc.)
+    4. Stores result in database
+    5. Returns comprehensive analysis
     
-    Returns nutrition data or 404 if barcode not found.
+    This ensures packaged foods get the same personalized treatment as photo analysis.
     """
     try:
+        # Look up product by barcode
         nutrition_data = await FDCNutritionService._search_open_food_facts_by_barcode(barcode)
         
         if not nutrition_data:
@@ -178,21 +182,181 @@ async def scan_barcode(
                 detail=f"Product with barcode {barcode} not found"
             )
         
-        return {
-            "barcode": barcode,
-            "product_name": nutrition_data.get("food_name"),
-            "brands": nutrition_data.get("brands", ""),
-            "nutrition": nutrition_data.get("nutrition", {}),
-            "serving_size": nutrition_data.get("serving_size"),
-            "serving_unit": nutrition_data.get("serving_unit"),
-            "source": nutrition_data.get("source")
+        # Get today's meals for context
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        result = await db.execute(
+            select(Meal).where(
+                and_(
+                    Meal.user_id == current_user.id,
+                    Meal.created_at >= today_start
+                )
+            ).order_by(Meal.created_at)
+        )
+        today_meals = result.scalars().all()
+        
+        # Build daily meals context
+        daily_meals_so_far = [
+            {
+                "nutrition_result": meal.nutrition_result,
+                "created_at": meal.created_at.isoformat()
+            }
+            for meal in today_meals
+        ]
+        
+        # Get historical meals (last 30 days) for drift detection
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        result = await db.execute(
+            select(Meal).where(
+                and_(
+                    Meal.user_id == current_user.id,
+                    Meal.created_at >= thirty_days_ago
+                )
+            ).order_by(Meal.created_at)
+        )
+        historical_meals = result.scalars().all()
+        
+        # Build historical meals for drift detector
+        historical_meals_data = [
+            {
+                "nutrition_result": meal.nutrition_result,
+                "vision_result": meal.vision_result,
+                "created_at": meal.created_at.isoformat(),
+                "context": meal.context
+            }
+            for meal in historical_meals
+        ]
+        
+        # Build user profile dict
+        user_profile = {
+            "id": current_user.id,
+            "age_range": current_user.age_range,
+            "height_range": current_user.height_range,
+            "weight_range": current_user.weight_range,
+            "activity_level": current_user.activity_level,
+            "goal": current_user.goal
         }
+        
+        # Create synthetic vision result from barcode data
+        vision_result = {
+            "foods": [
+                {
+                    "name": nutrition_data.get("food_name", "Unknown product"),
+                    "portion": f"1 serving ({nutrition_data.get('serving_size', 100)}{nutrition_data.get('serving_unit', 'g')})",
+                    "confidence": "high",
+                    "barcode": barcode,
+                    "source": "barcode_scan"
+                }
+            ],
+            "image_ambiguity": "low",
+            "context_applied": "packaged_food",
+            "barcode_source": nutrition_data.get("source", "Open Food Facts")
+        }
+        
+        # Create nutrition result from barcode data
+        nutrition_result = {
+            "total_calories": {
+                "min": nutrition_data.get("nutrition", {}).get("calories", 0),
+                "max": nutrition_data.get("nutrition", {}).get("calories", 0)
+            },
+            "macros": {
+                "protein": f"{nutrition_data.get('nutrition', {}).get('protein_g', 0):.0f}g",
+                "carbs": f"{nutrition_data.get('nutrition', {}).get('carbs_g', 0):.0f}g",
+                "fat": f"{nutrition_data.get('nutrition', {}).get('fat_g', 0):.0f}g"
+            },
+            "uncertainty": "low",
+            "per_food_breakdown": [
+                {
+                    "name": nutrition_data.get("food_name", "Unknown product"),
+                    "calories_min": nutrition_data.get("nutrition", {}).get("calories", 0),
+                    "calories_max": nutrition_data.get("nutrition", {}).get("calories", 0)
+                }
+            ],
+            "source": "barcode_verified"
+        }
+        
+        # Run through personalization and wellness agents only
+        # (skip vision and nutrition since we have verified data)
+        try:
+            personalization_result = await orchestrator.personalization_agent.process(
+                nutrition_result=nutrition_result,
+                user_profile=user_profile,
+                daily_meals_so_far=daily_meals_so_far
+            )
+        except Exception as e:
+            personalization_result = {
+                "balance_status": "roughly_aligned",
+                "daily_context": "Barcode scanned successfully.",
+                "error": str(e)
+            }
+        
+        try:
+            wellness_result = await orchestrator.wellness_agent.process(
+                personalization_result=personalization_result,
+                nutrition_result=nutrition_result,
+                vision_result=vision_result
+            )
+        except Exception as e:
+            wellness_result = {
+                "message": f"Product logged: {nutrition_data.get('food_name')}. Great job tracking packaged foods!",
+                "emoji_indicator": "🟢",
+                "suggestions": [],
+                "disclaimer_shown": True,
+                "error": str(e)
+            }
+        
+        # Store meal in database
+        new_meal = Meal(
+            user_id=current_user.id,
+            image_data=f"barcode:{barcode}",
+            image_mime_type="barcode",
+            context=context or "packaged_food",
+            notes=notes or f"Barcode: {barcode}",
+            vision_result=vision_result,
+            nutrition_result=nutrition_result,
+            personalization_result=personalization_result,
+            wellness_result=wellness_result,
+            confidence_score="high",
+            image_ambiguity="low"
+        )
+        
+        db.add(new_meal)
+        await db.commit()
+        await db.refresh(new_meal)
+        
+        # Build response
+        return MealAnalysisResponse(
+            meal_id=new_meal.id,
+            vision={
+                "foods": vision_result.get("foods", []),
+                "image_ambiguity": "low",
+                "context_applied": "packaged_food"
+            },
+            nutrition={
+                "total_calories": nutrition_result.get("total_calories", {"min": 0, "max": 0}),
+                "macros": nutrition_result.get("macros", {}),
+                "uncertainty": "low"
+            },
+            personalization={
+                "balance_status": personalization_result.get("balance_status", "roughly_aligned"),
+                "daily_context": personalization_result.get("daily_context", ""),
+                "remaining_estimate": personalization_result.get("remaining_estimate")
+            },
+            wellness={
+                "message": wellness_result.get("message", ""),
+                "emoji_indicator": wellness_result.get("emoji_indicator", "🟢"),
+                "suggestions": wellness_result.get("suggestions", []),
+                "disclaimer_shown": True
+            },
+            confidence_score="high",
+            created_at=new_meal.created_at
+        )
+        
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Barcode lookup failed: {str(e)}"
+            detail=f"Barcode analysis failed: {str(e)}"
         )
 
 
