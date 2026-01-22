@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from config import get_settings
 from database import init_db
 from services.opik_service import init_opik
-from routers import auth, profile, analyze, feedback, balance, debug, metrics, experiments
+from routers import auth, profile, analyze, feedback, balance, debug, metrics, experiments, notifications, exports
 from schemas import HealthCheck
 
 settings = get_settings()
@@ -84,6 +84,8 @@ app.include_router(profile.router)
 app.include_router(analyze.router)
 app.include_router(feedback.router)
 app.include_router(balance.router)
+app.include_router(notifications.router)
+app.include_router(exports.router)
 app.include_router(debug.router)
 app.include_router(metrics.router)
 app.include_router(experiments.router)

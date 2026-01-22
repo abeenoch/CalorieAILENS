@@ -10,7 +10,7 @@ OPEN_FOOD_FACTS_API_URL = "https://world.openfoodfacts.org/api/v3"
 
 # Get settings for API key
 settings = get_settings()
-FDC_API_KEY = settings.fdc_api_key or "DEMO_KEY"  # Default to demo key for testing
+FDC_API_KEY = settings.fdc_api_key or "DEMO_KEY" 
 
 # Cache for nutrition data 
 _nutrition_cache: Dict[str, Dict[str, Any]] = {}
@@ -130,14 +130,15 @@ class FDCNutritionService:
             return _nutrition_cache[cache_key]
         
         try:
+            # Use the search.pl endpoint which is more reliable
             params = {
-                "q": food_name,
-                "fields": "product_name,code,nutriments,brands,categories",
-                "limit": 1
+                "search_terms": food_name,
+                "json": 1,
+                "page_size": 1
             }
             
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(f"{OPEN_FOOD_FACTS_API_URL}/search", params=params)
+                response = await client.get("https://world.openfoodfacts.org/cgi/search.pl", params=params)
                 response.raise_for_status()
                 
             data = response.json()
@@ -177,13 +178,14 @@ class FDCNutritionService:
             return _nutrition_cache[cache_key]
         
         try:
+            # Use v0 API which is most reliable for barcode lookups
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(f"{OPEN_FOOD_FACTS_API_URL}/product/{barcode}")
+                response = await client.get(f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json")
                 response.raise_for_status()
                 
             data = response.json()
             
-            if data.get("status") != 1 or not data.get("product"):
+            if not data.get("product"):
                 print(f"Open Food Facts: Barcode {barcode} not found")
                 return None
             

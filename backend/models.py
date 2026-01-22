@@ -92,3 +92,42 @@ class DailyBalance(Base):
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class NotificationPreference(Base):
+    """User notification preferences."""
+    __tablename__ = "notification_preferences"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    
+    # Notification settings
+    meal_reminders_enabled: Mapped[bool] = mapped_column(default=True)
+    meal_reminder_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "09:00", "12:00", "18:00"
+    weekly_summary_enabled: Mapped[bool] = mapped_column(default=True)
+    weekly_summary_day: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # "monday", "sunday"
+    weekly_summary_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "19:00"
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class WeeklyExport(Base):
+    """Weekly insight exports for sharing."""
+    __tablename__ = "weekly_exports"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    
+    # Export metadata
+    week_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    week_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    
+    # Export data (stored as JSON for flexibility)
+    summary_data: Mapped[dict] = mapped_column(JSON, nullable=False)  # Contains insights, macros, patterns
+    
+    # Sharing
+    share_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)  # For public sharing
+    is_public: Mapped[bool] = mapped_column(default=False)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

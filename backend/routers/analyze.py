@@ -129,7 +129,8 @@ async def analyze_meal(
         vision={
             "foods": analysis.get("vision_result", {}).get("foods", []),
             "image_ambiguity": analysis.get("vision_result", {}).get("image_ambiguity", "unknown"),
-            "context_applied": analysis.get("vision_result", {}).get("context_applied")
+            "context_applied": analysis.get("vision_result", {}).get("context_applied"),
+            "barcode_detected": analysis.get("vision_result", {}).get("barcode_detected")
         },
         nutrition={
             "total_calories": analysis.get("nutrition_result", {}).get("total_calories", {"min": 0, "max": 0}),
@@ -173,14 +174,27 @@ async def scan_barcode(
     This ensures packaged foods get the same personalized treatment as photo analysis.
     """
     try:
+        print(f"Barcode scan request: {barcode}")
+        
         # Look up product by barcode
         nutrition_data = await FDCNutritionService._search_open_food_facts_by_barcode(barcode)
         
         if not nutrition_data:
+            print(f"Barcode {barcode} not found in Open Food Facts")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product with barcode {barcode} not found"
+                detail=f"Product with barcode {barcode} not found in Open Food Facts database. Try a different product or upload a food photo instead."
             )
+        
+        print(f"Found product: {nutrition_data.get('food_name')}")
+        
+        # Check if nutrition data is empty
+        nutrition = nutrition_data.get("nutrition", {})
+        if not nutrition or nutrition.get("calories", 0) == 0:
+            print(f"Warning: Barcode {barcode} found but has no nutrition data")
+            print(f"Product: {nutrition_data.get('food_name')}")
+            print(f"Nutriments: {nutrition}")
+            # Continue anyway - user can still log the product
         
         # Get today's meals for context
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -248,27 +262,32 @@ async def scan_barcode(
                 }
             ],
             "image_ambiguity": "low",
-            "context_applied": "packaged_food",
+            "context_applied": context or "packaged_food",
             "barcode_source": nutrition_data.get("source", "Open Food Facts")
         }
         
         # Create nutrition result from barcode data
+        calories = nutrition.get("calories", 0)
+        protein = nutrition.get("protein_g", 0)
+        carbs = nutrition.get("carbs_g", 0)
+        fat = nutrition.get("fat_g", 0)
+        
         nutrition_result = {
             "total_calories": {
-                "min": nutrition_data.get("nutrition", {}).get("calories", 0),
-                "max": nutrition_data.get("nutrition", {}).get("calories", 0)
+                "min": calories,
+                "max": calories
             },
             "macros": {
-                "protein": f"{nutrition_data.get('nutrition', {}).get('protein_g', 0):.0f}g",
-                "carbs": f"{nutrition_data.get('nutrition', {}).get('carbs_g', 0):.0f}g",
-                "fat": f"{nutrition_data.get('nutrition', {}).get('fat_g', 0):.0f}g"
+                "protein": f"{protein:.0f}g" if protein else "N/A",
+                "carbs": f"{carbs:.0f}g" if carbs else "N/A",
+                "fat": f"{fat:.0f}g" if fat else "N/A"
             },
-            "uncertainty": "low",
+            "uncertainty": "low" if calories > 0 else "medium",
             "per_food_breakdown": [
                 {
                     "name": nutrition_data.get("food_name", "Unknown product"),
-                    "calories_min": nutrition_data.get("nutrition", {}).get("calories", 0),
-                    "calories_max": nutrition_data.get("nutrition", {}).get("calories", 0)
+                    "calories_min": calories,
+                    "calories_max": calories
                 }
             ],
             "source": "barcode_verified"
@@ -283,6 +302,7 @@ async def scan_barcode(
                 daily_meals_so_far=daily_meals_so_far
             )
         except Exception as e:
+            print(f"Personalization error: {str(e)}")
             personalization_result = {
                 "balance_status": "roughly_aligned",
                 "daily_context": "Barcode scanned successfully.",
@@ -296,6 +316,7 @@ async def scan_barcode(
                 vision_result=vision_result
             )
         except Exception as e:
+            print(f"Wellness error: {str(e)}")
             wellness_result = {
                 "message": f"Product logged: {nutrition_data.get('food_name')}. Great job tracking packaged foods!",
                 "emoji_indicator": "🟢",
@@ -310,7 +331,7 @@ async def scan_barcode(
             image_data=f"barcode:{barcode}",
             image_mime_type="barcode",
             context=context or "packaged_food",
-            notes=notes or f"Barcode: {barcode}",
+            notes=notes or f"Barcode: {barcode} - {nutrition_data.get('food_name')}",
             vision_result=vision_result,
             nutrition_result=nutrition_result,
             personalization_result=personalization_result,
@@ -323,18 +344,20 @@ async def scan_barcode(
         await db.commit()
         await db.refresh(new_meal)
         
+        print(f"Meal stored: {new_meal.id}")
+        
         # Build response
         return MealAnalysisResponse(
             meal_id=new_meal.id,
             vision={
                 "foods": vision_result.get("foods", []),
                 "image_ambiguity": "low",
-                "context_applied": "packaged_food"
+                "context_applied": context or "packaged_food"
             },
             nutrition={
                 "total_calories": nutrition_result.get("total_calories", {"min": 0, "max": 0}),
                 "macros": nutrition_result.get("macros", {}),
-                "uncertainty": "low"
+                "uncertainty": nutrition_result.get("uncertainty", "medium")
             },
             personalization={
                 "balance_status": personalization_result.get("balance_status", "roughly_aligned"),
@@ -354,6 +377,7 @@ async def scan_barcode(
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Barcode analysis error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Barcode analysis failed: {str(e)}"
@@ -364,16 +388,63 @@ async def scan_barcode(
 async def get_meal_history(
     limit: int = 20,
     offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    context: Optional[str] = None,
+    food_name: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get the user's meal analysis history.
+    Get the user's meal analysis history with optional filtering.
+    
+    Query Parameters:
+    - limit: Number of results (default: 20)
+    - offset: Pagination offset (default: 0)
+    - start_date: Filter by start date (ISO format: YYYY-MM-DD)
+    - end_date: Filter by end date (ISO format: YYYY-MM-DD)
+    - context: Filter by meal context (homemade, restaurant, snack, meal)
+    - food_name: Search by food name (partial match, case-insensitive)
     """
+    query = select(Meal).where(Meal.user_id == current_user.id)
+    
+    # Date range filtering
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date).replace(hour=0, minute=0, second=0, microsecond=0)
+            query = query.where(Meal.created_at >= start_dt)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid start_date format. Use YYYY-MM-DD"
+            )
+    
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59, microsecond=999999)
+            query = query.where(Meal.created_at <= end_dt)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid end_date format. Use YYYY-MM-DD"
+            )
+    
+    # Context filtering
+    if context:
+        query = query.where(Meal.context == context)
+    
+    # Food name search (searches in vision_result foods)
+    if food_name:
+        # This is a simple text search in the notes field
+        # For more advanced search, consider using full-text search
+        query = query.where(
+            (Meal.notes.ilike(f"%{food_name}%")) |
+            (Meal.vision_result.astext.ilike(f"%{food_name}%"))
+        )
+    
+    # Execute query with ordering and pagination
     result = await db.execute(
-        select(Meal)
-        .where(Meal.user_id == current_user.id)
-        .order_by(Meal.created_at.desc())
+        query.order_by(Meal.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
@@ -429,4 +500,234 @@ async def get_meal_detail(
         "confidence_score": meal.confidence_score,
         "image_ambiguity": meal.image_ambiguity,
         "created_at": meal.created_at
+    }
+
+
+@router.get("/macros/today")
+async def get_today_macros(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get aggregated macros for today (for pie chart visualization).
+    
+    Returns:
+    - total_calories: Total calories consumed
+    - protein_g: Total protein in grams
+    - carbs_g: Total carbs in grams
+    - fat_g: Total fat in grams
+    - macro_percentages: Percentage breakdown for pie chart
+    - meals_count: Number of meals logged today
+    """
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = datetime.utcnow().replace(hour=23, minute=59, second=59, microsecond=999999)
+    
+    result = await db.execute(
+        select(Meal).where(
+            and_(
+                Meal.user_id == current_user.id,
+                Meal.created_at >= today_start,
+                Meal.created_at <= today_end
+            )
+        ).order_by(Meal.created_at)
+    )
+    meals = result.scalars().all()
+    
+    # Aggregate macros
+    total_calories = 0
+    total_protein_calories = 0
+    total_carbs_calories = 0
+    total_fat_calories = 0
+    
+    def extract_percentage(value):
+        """Extract percentage from strings like '20-25%' or '20%'."""
+        if not value or value == "N/A":
+            return 0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            value = value.strip()
+            # Extract first number from percentage range (e.g., "20-25%" -> 20)
+            if "%" in value:
+                try:
+                    # Get the first number before the dash or %
+                    num_str = value.split("-")[0].replace("%", "").strip()
+                    return float(num_str)
+                except ValueError:
+                    return 0
+        return 0
+    
+    for meal in meals:
+        nutrition = meal.nutrition_result or {}
+        macros = nutrition.get("macros", {})
+        
+        # Parse calorie range (use midpoint)
+        cal_range = nutrition.get("total_calories", {})
+        if cal_range:
+            cal_min = cal_range.get("min", 0)
+            cal_max = cal_range.get("max", 0)
+            meal_calories = (cal_min + cal_max) / 2
+            total_calories += meal_calories
+            
+            # Extract macro percentages and convert to calories
+            protein_pct = extract_percentage(macros.get("protein", 0))
+            carbs_pct = extract_percentage(macros.get("carbs", 0))
+            fat_pct = extract_percentage(macros.get("fat", 0))
+            
+            # Convert percentages to calories
+            total_protein_calories += (protein_pct / 100) * meal_calories
+            total_carbs_calories += (carbs_pct / 100) * meal_calories
+            total_fat_calories += (fat_pct / 100) * meal_calories
+    
+    # Convert calories back to grams
+    # Protein: 4 cal/g, Carbs: 4 cal/g, Fat: 9 cal/g
+    total_protein_g = total_protein_calories / 4 if total_protein_calories > 0 else 0
+    total_carbs_g = total_carbs_calories / 4 if total_carbs_calories > 0 else 0
+    total_fat_g = total_fat_calories / 9 if total_fat_calories > 0 else 0
+    
+    # Calculate macro percentages
+    macro_calories_total = total_protein_calories + total_carbs_calories + total_fat_calories
+    
+    if macro_calories_total > 0:
+        protein_percentage = round((total_protein_calories / macro_calories_total) * 100, 1)
+        carbs_percentage = round((total_carbs_calories / macro_calories_total) * 100, 1)
+        fat_percentage = round((total_fat_calories / macro_calories_total) * 100, 1)
+    else:
+        protein_percentage = carbs_percentage = fat_percentage = 0
+    
+    return {
+        "total_calories": round(total_calories, 1),
+        "protein_g": round(total_protein_g, 1),
+        "carbs_g": round(total_carbs_g, 1),
+        "fat_g": round(total_fat_g, 1),
+        "macro_percentages": {
+            "protein": protein_percentage,
+            "carbs": carbs_percentage,
+            "fat": fat_percentage
+        },
+        "meals_count": len(meals)
+    }
+
+
+@router.get("/macros/date-range")
+async def get_macros_by_date_range(
+    start_date: str,
+    end_date: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get aggregated macros for a date range (for pie chart visualization).
+    
+    Query Parameters:
+    - start_date: Start date (ISO format: YYYY-MM-DD)
+    - end_date: End date (ISO format: YYYY-MM-DD)
+    
+    Returns:
+    - total_calories: Total calories consumed
+    - protein_g: Total protein in grams
+    - carbs_g: Total carbs in grams
+    - fat_g: Total fat in grams
+    - macro_percentages: Percentage breakdown for pie chart
+    - meals_count: Number of meals logged
+    - days_count: Number of days in range
+    """
+    try:
+        start_dt = datetime.fromisoformat(start_date).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59, microsecond=999999)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format. Use YYYY-MM-DD"
+        )
+    
+    result = await db.execute(
+        select(Meal).where(
+            and_(
+                Meal.user_id == current_user.id,
+                Meal.created_at >= start_dt,
+                Meal.created_at <= end_dt
+            )
+        ).order_by(Meal.created_at)
+    )
+    meals = result.scalars().all()
+    
+    # Aggregate macros
+    total_calories = 0
+    total_protein_calories = 0
+    total_carbs_calories = 0
+    total_fat_calories = 0
+    
+    def extract_percentage(value):
+        """Extract percentage from strings like '20-25%' or '20%'."""
+        if not value or value == "N/A":
+            return 0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            value = value.strip()
+            # Extract first number from percentage range (e.g., "20-25%" -> 20)
+            if "%" in value:
+                try:
+                    # Get the first number before the dash or %
+                    num_str = value.split("-")[0].replace("%", "").strip()
+                    return float(num_str)
+                except ValueError:
+                    return 0
+        return 0
+    
+    for meal in meals:
+        nutrition = meal.nutrition_result or {}
+        macros = nutrition.get("macros", {})
+        
+        # Parse calorie range (use midpoint)
+        cal_range = nutrition.get("total_calories", {})
+        if cal_range:
+            cal_min = cal_range.get("min", 0)
+            cal_max = cal_range.get("max", 0)
+            meal_calories = (cal_min + cal_max) / 2
+            total_calories += meal_calories
+            
+            # Extract macro percentages and convert to calories
+            protein_pct = extract_percentage(macros.get("protein", 0))
+            carbs_pct = extract_percentage(macros.get("carbs", 0))
+            fat_pct = extract_percentage(macros.get("fat", 0))
+            
+            # Convert percentages to calories
+            total_protein_calories += (protein_pct / 100) * meal_calories
+            total_carbs_calories += (carbs_pct / 100) * meal_calories
+            total_fat_calories += (fat_pct / 100) * meal_calories
+    
+    # Convert calories back to grams
+    # Protein: 4 cal/g, Carbs: 4 cal/g, Fat: 9 cal/g
+    total_protein_g = total_protein_calories / 4 if total_protein_calories > 0 else 0
+    total_carbs_g = total_carbs_calories / 4 if total_carbs_calories > 0 else 0
+    total_fat_g = total_fat_calories / 9 if total_fat_calories > 0 else 0
+    
+    # Calculate macro percentages
+    macro_calories_total = total_protein_calories + total_carbs_calories + total_fat_calories
+    
+    if macro_calories_total > 0:
+        protein_percentage = round((total_protein_calories / macro_calories_total) * 100, 1)
+        carbs_percentage = round((total_carbs_calories / macro_calories_total) * 100, 1)
+        fat_percentage = round((total_fat_calories / macro_calories_total) * 100, 1)
+    else:
+        protein_percentage = carbs_percentage = fat_percentage = 0
+    
+    # Calculate days in range
+    days_count = (end_dt - start_dt).days + 1
+    
+    return {
+        "total_calories": round(total_calories, 1),
+        "protein_g": round(total_protein_g, 1),
+        "carbs_g": round(total_carbs_g, 1),
+        "fat_g": round(total_fat_g, 1),
+        "macro_percentages": {
+            "protein": protein_percentage,
+            "carbs": carbs_percentage,
+            "fat": fat_percentage
+        },
+        "meals_count": len(meals),
+        "days_count": days_count,
+        "average_calories_per_day": round(total_calories / days_count, 1) if days_count > 0 else 0
     }

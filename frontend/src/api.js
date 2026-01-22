@@ -85,11 +85,31 @@ export const analyzeAPI = {
             }),
         }),
 
-    getHistory: (limit = 20, offset = 0) =>
-        apiCall(`/analyze/history?limit=${limit}&offset=${offset}`),
+    scanBarcode: (barcode, context, notes) =>
+        apiCall(`/analyze/barcode?barcode=${encodeURIComponent(barcode)}&context=${encodeURIComponent(context || '')}&notes=${encodeURIComponent(notes || '')}`, {
+            method: 'POST',
+        }),
+
+    getHistory: (limit = 20, offset = 0, filters = {}) => {
+        const params = new URLSearchParams({
+            limit,
+            offset,
+            ...(filters.startDate && { start_date: filters.startDate }),
+            ...(filters.endDate && { end_date: filters.endDate }),
+            ...(filters.context && { context: filters.context }),
+            ...(filters.foodName && { food_name: filters.foodName }),
+        });
+        return apiCall(`/analyze/history?${params.toString()}`);
+    },
 
     getMealDetail: (mealId) =>
         apiCall(`/analyze/meal/${mealId}`),
+
+    getTodayMacros: () =>
+        apiCall('/analyze/macros/today'),
+
+    getMacrosByDateRange: (startDate, endDate) =>
+        apiCall(`/analyze/macros/date-range?start_date=${startDate}&end_date=${endDate}`),
 };
 
 // Feedback API
@@ -109,6 +129,35 @@ export const feedbackAPI = {
 
     getStats: () =>
         apiCall('/feedback/stats'),
+};
+
+// Notifications API
+export const notificationsAPI = {
+    getPreferences: () =>
+        apiCall('/notifications/preferences'),
+
+    updatePreferences: (preferences) =>
+        apiCall('/notifications/preferences', {
+            method: 'PUT',
+            body: JSON.stringify(preferences),
+        }),
+
+    checkMealReminder: () =>
+        apiCall('/notifications/check-meal-reminder'),
+};
+
+// Exports API
+export const exportsAPI = {
+    getWeeklySummary: () =>
+        apiCall('/exports/weekly-summary'),
+
+    createShareableWeeklySummary: () =>
+        apiCall('/exports/weekly-summary/share', {
+            method: 'POST',
+        }),
+
+    getSharedSummary: (shareToken) =>
+        apiCall(`/exports/shared/${shareToken}`),
 };
 
 // Balance API

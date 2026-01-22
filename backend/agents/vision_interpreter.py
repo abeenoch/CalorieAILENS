@@ -1,5 +1,7 @@
 import base64
 from typing import Optional
+from PIL import Image
+from io import BytesIO
 
 from opik import track
 
@@ -15,7 +17,8 @@ class VisionInterpreterAgent(BaseAgent):
     
     Responsibilities:
     - Accepts image (base64) + optional context
-    - Uses Gemini Vision to identify food items
+    - Detects if image contains a barcode
+    - Uses Gemini Vision to identify food items (if not barcode)
     - Estimates rough portion sizes
     - Outputs structured JSON with confidence scores
     """
@@ -51,6 +54,38 @@ You must ALWAYS respond with valid JSON in this exact format:
 
 Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
     
+    @staticmethod
+    def _detect_barcode(image_bytes: bytes) -> Optional[str]:
+        """
+        Detect if image contains a barcode and extract it.
+        
+        Returns:
+            Barcode string if detected, None otherwise
+        """
+        try:
+            from pyzbar.pyzbar import decode
+            
+            # Convert bytes to PIL Image
+            image = Image.open(BytesIO(image_bytes))
+            
+            # Try to decode barcodes
+            decoded_objects = decode(image)
+            
+            if decoded_objects:
+                # Return first barcode found
+                barcode_data = decoded_objects[0].data.decode("utf-8")
+                print(f"Barcode detected: {barcode_data}")
+                return barcode_data
+            
+            return None
+        except ImportError:
+            print("pyzbar not available - barcode detection disabled. Install with: pip install pyzbar")
+            return None
+        except Exception as e:
+            print(f"Barcode detection error (non-critical): {str(e)}")
+            # Don't fail - just continue with regular vision analysis
+            return None
+    
     @track(name="vision_interpreter", project_name=settings.opik_project_name)
     async def process(
         self,
@@ -74,6 +109,19 @@ Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
             image_bytes = base64.b64decode(image_base64)
         except Exception as e:
             raise Exception(f"Invalid base64 image data: {str(e)}")
+        
+        # Try to detect barcode first
+        detected_barcode = self._detect_barcode(image_bytes)
+        if detected_barcode:
+            print(f"Barcode detected in image: {detected_barcode}. Frontend should call /analyze/barcode endpoint.")
+            return {
+                "foods": [],
+                "image_ambiguity": "low",
+                "context_applied": context,
+                "barcode_detected": detected_barcode,
+                "is_barcode_image": True,
+                "message": "Barcode detected in image. Processing with barcode endpoint..."
+            }
         
         # Build prompt
         prompt = "Analyze this food image and identify all food items with estimated portions."
@@ -99,7 +147,7 @@ Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
         if "context_applied" not in result:
             result["context_applied"] = context
         
-        # DEDUPLICATE FOODS: Remove exact duplicates while preserving order
+        # DEDUPLICATE FOOD
         seen_foods = set()
         unique_foods = []
         

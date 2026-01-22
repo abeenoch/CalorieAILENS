@@ -113,13 +113,25 @@ Frontend runs at http://localhost:5173
 ### Meal Analysis
 - `POST /analyze/meal` - Analyze meal photo (orchestrates all agents)
 - `POST /analyze/barcode` - Quick barcode scan for packaged foods
-- `GET /analyze/history` - Get meal history (paginated)
+- `GET /analyze/history` - Get meal history with filtering (date range, context, food search)
 - `GET /analyze/meal/{id}` - Get detailed analysis for specific meal
+- `GET /analyze/macros/today` - Get today's macro breakdown (for pie chart)
+- `GET /analyze/macros/date-range` - Get macro breakdown for date range
 
 ### Feedback
 - `POST /feedback` - Submit feedback for meal analysis
 - `GET /feedback/meal/{id}` - Get feedback for specific meal
 - `GET /feedback/stats` - Get feedback statistics
+
+### Notifications
+- `GET /notifications/preferences` - Get notification preferences
+- `PUT /notifications/preferences` - Update notification preferences
+- `GET /notifications/check-meal-reminder` - Check if meal reminder should be sent
+
+### Exports & Sharing
+- `GET /exports/weekly-summary` - Get this week's wellness summary
+- `POST /exports/weekly-summary/share` - Create shareable weekly summary
+- `GET /exports/shared/{share_token}` - View publicly shared summary (no auth required)
 
 ### Balance
 - `GET /balance/today` - Today's energy balance summary
@@ -135,6 +147,10 @@ Frontend runs at http://localhost:5173
 **Feedbacks**: Meal reference, feedback type (accurate/portion_bigger/portion_smaller/wrong_food), comment
 
 **DailyBalances**: User reference, date, calorie ranges, balance status, reasoning
+
+**NotificationPreferences**: User notification settings (meal reminders, weekly summaries, times)
+
+**WeeklyExports**: Weekly summaries with shareable tokens for public viewing
 
 ## Food Database
 
@@ -164,27 +180,81 @@ This approach ensures coverage for both raw ingredients and packaged foods while
 **Photo Analysis**:
 1. User uploads image via frontend
 2. Frontend converts to base64, sends to `/analyze/meal`
-3. Backend orchestrator chains agents:
+3. Vision Interpreter detects if image contains a barcode
+4. If barcode detected: Returns barcode number and suggests using `/analyze/barcode` endpoint
+5. If regular food photo:
    - Vision Interpreter identifies foods and portions
    - Nutrition Reasoner calculates calorie ranges (queries USDA FDC, falls back to Open Food Facts)
    - Personalization Agent contextualizes with user profile and daily meals
    - Wellness Coach generates supportive feedback with safety checks
    - Advanced agents provide drift detection, next actions, strategy adaptation
-4. All results logged to Opik with full trace
-5. Results stored in database
-6. Response sent to frontend with foods, calorie ranges, balance status, message, suggestions
-7. User provides feedback (accurate/portion_bigger/etc.)
-8. Feedback logged to Opik for model improvement
+6. All results logged to Opik with full trace
+7. Results stored in database
+8. Response sent to frontend with foods, calorie ranges, balance status, message, suggestions
+9. User provides feedback (accurate/portion_bigger/etc.)
+10. Feedback logged to Opik for model improvement
 
 **Barcode Scanning**:
-1. User scans barcode via frontend
-2. Frontend sends barcode to `/analyze/barcode`
-3. Backend queries Open Food Facts directly
-4. Creates synthetic vision result with verified nutrition data
-5. Runs through personalization and wellness agents
-6. Returns personalized analysis (balance status, supportive message)
-7. Stores in database with full meal record
-8. User gets same personalized experience as photo analysis
+1. User uploads barcode image to `/analyze/meal`
+2. Vision Interpreter detects barcode and returns barcode number
+3. Frontend receives barcode number and calls `/analyze/barcode` endpoint
+4. `/analyze/barcode` endpoint:
+   - Queries Open Food Facts by barcode
+   - Gets verified product name and nutrition data
+   - Creates synthetic vision result with barcode data
+   - Runs through personalization and wellness agents
+   - Returns personalized analysis (balance status, supportive message)
+   - Stores in database with full meal record
+5. User gets same personalized experience as photo analysis
+
+## Macro Aggregation & Visualization
+
+The application provides macro aggregation endpoints for visualization:
+
+**Today's Macros** (`GET /analyze/macros/today`):
+```json
+{
+  "total_calories": 2150.5,
+  "protein_g": 85.3,
+  "carbs_g": 280.2,
+  "fat_g": 65.1,
+  "macro_percentages": {
+    "protein": 16.5,
+    "carbs": 54.2,
+    "fat": 29.3
+  },
+  "meals_count": 3
+}
+```
+
+**Date Range Macros** (`GET /analyze/macros/date-range?start_date=2025-01-20&end_date=2025-01-22`):
+- Same response as today endpoint, plus:
+  - `days_count`: Number of days in range
+  - `average_calories_per_day`: Average daily calories
+
+Macro percentages are calculated by calorie contribution:
+- Protein: 4 calories per gram
+- Carbs: 4 calories per gram
+- Fat: 9 calories per gram
+
+## Meal History Filtering
+
+The `/analyze/history` endpoint now supports advanced filtering:
+
+**Query Parameters**:
+- `start_date` - Filter by start date (ISO format: YYYY-MM-DD)
+- `end_date` - Filter by end date (ISO format: YYYY-MM-DD)
+- `context` - Filter by meal context (homemade, restaurant, snack, meal)
+- `food_name` - Search by food name (partial match, case-insensitive)
+- `limit` - Number of results (default: 20)
+- `offset` - Pagination offset (default: 0)
+
+**Example**:
+```bash
+GET /analyze/history?start_date=2025-01-20&context=restaurant&food_name=chicken&limit=10
+```
+
+Returns meals from Jan 20 onwards, logged at restaurants, containing "chicken" in the food name.
 
 ## Configuration
 
@@ -231,6 +301,8 @@ backend/
 │   ├── analyze.py
 │   ├── feedback.py
 │   ├── balance.py
+│   ├── notifications.py       # Notification preferences
+│   ├── exports.py             # Weekly summaries & sharing
 │   ├── debug.py
 │   ├── metrics.py
 │   └── experiments.py
@@ -250,9 +322,16 @@ frontend/
 │   ├── index.css             # Global styles
 │   ├── components/
 │   │   ├── AgentInsights.jsx # Agent results display
+│   │   ├── MacroChart.jsx    # Macro pie chart visualization
+│   │   ├── NotificationSettings.jsx # Notification preferences
+│   │   ├── WeeklySummary.jsx # Weekly summary & sharing
 │   │   └── MetricsDashboard.jsx
 │   └── styles/
-│       └── agent-insights.css
+│       ├── agent-insights.css
+│       ├── macro-chart.css   # Macro chart styling
+│       ├── history.css       # History view with filters
+│       ├── home.css          # Home view macro details
+│       └── notifications-exports.css # Notifications & exports styling
 ├── index.html
 ├── package.json
 └── vite.config.js
@@ -273,6 +352,68 @@ frontend/
 **Weekly Reflection**: AI-powered insights on weekly patterns, goal alignment, and recommendations.
 
 **Error Resilience**: Graceful fallbacks if individual agents fail; partial results returned rather than complete failure.
+
+**Navigation**: The app includes intuitive navigation with dedicated pages for:
+- **Home**: Daily energy balance and macro visualization
+- **Analyze**: Photo/barcode scanning for meal analysis
+- **History**: Meal history with advanced filtering and search
+- **Notifications**: Manage meal reminders and weekly summaries
+- **Share**: Create and share weekly wellness summaries
+- **Profile**: Customize your wellness goals and preferences
+
+## Recent Features
+
+### Macro Visualization (Pie Chart)
+- Donut pie chart showing protein/carbs/fat breakdown
+- Color-coded macros: Protein (red), Carbs (teal), Fat (yellow)
+- Displays on home page with total calories
+- Macro percentages calculated by calorie contribution
+- Responsive canvas-based rendering
+- Endpoints: `/analyze/macros/today` and `/analyze/macros/date-range`
+
+### Meal History with Search & Filtering
+- Filter by date range (start_date, end_date)
+- Filter by meal context (homemade, restaurant, snack, meal)
+- Search by food name (case-insensitive partial match)
+- Enhanced meal cards showing timestamp, macros, wellness message
+- Collapsible filter panel with active filters display
+- Pagination support for large meal histories
+
+### Barcode Scanning
+- Detect barcodes in food images automatically
+- Query Open Food Facts database for product info
+- Full agent pipeline for packaged foods (personalization + wellness)
+- Support for EAN-13 and UPC-12 barcodes
+
+### Notifications
+- **Meal Reminders**: Optional daily reminders to log meals at a specific time
+- **Weekly Summaries**: Automatic wellness summaries on a chosen day/time
+- **Customizable**: Users can enable/disable and set preferred times
+- **Endpoints**: Get/update preferences, check if reminder should be sent
+
+**How to Use**:
+1. Navigate to the **Notifications** page in the app
+2. Toggle **Enable meal reminders** and set your preferred time
+3. Toggle **Enable weekly summary** and choose your preferred day and time
+4. Click **Save Preferences** to store your settings
+5. Reminders will be checked when you visit the app at the scheduled times
+
+### Exports & Sharing
+- **Weekly Summaries**: Automatic aggregation of wellness data (meals, macros, insights)
+- **Shareable Links**: Generate public links with unique tokens
+- **Privacy-Focused**: Only shares high-level insights (meals logged, calories, macros, wellness highlights), not detailed tracking data
+- **Public Access**: Anyone with the link can view (no authentication needed)
+- **Unique Wellness Highlights**: Deduplicates wellness messages to show only unique insights
+- **Production Ready**: URLs work across domains (e.g., `https://yourdomain.com/exports/shared/{token}`)
+- **Endpoints**: Get summaries, create shares, view public summaries
+
+**How to Use**:
+1. Navigate to the **Share** page in the app
+2. View your weekly wellness summary (meals logged, calories, macros, insights)
+3. Click **Share** to generate a shareable link
+4. Click **Copy** to copy the link to your clipboard
+5. Share the link with anyone - they can view your wellness summary without logging in
+6. The shared view displays only high-level insights, protecting your privacy
 
 ## License
 

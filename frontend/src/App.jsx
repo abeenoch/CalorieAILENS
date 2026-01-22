@@ -1,7 +1,14 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import './App.css';
 import './styles/agent-insights.css';
+import './styles/macro-chart.css';
+import './styles/history.css';
+import './styles/home.css';
+import './styles/notifications-exports.css';
 import { authAPI, profileAPI, analyzeAPI, balanceAPI, feedbackAPI } from './api';
+import { MacroChart } from './components/MacroChart';
+import { NotificationSettings } from './components/NotificationSettings';
+import { WeeklySummary } from './components/WeeklySummary';
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -15,10 +22,27 @@ function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState('home');
+  const [sharedSummary, setSharedSummary] = useState(null);
 
   useEffect(() => {
     checkAuth();
+    // Check if we're viewing a shared summary
+    const path = window.location.pathname;
+    if (path.startsWith('/exports/shared/')) {
+      const shareToken = path.split('/').pop();
+      loadSharedSummary(shareToken);
+    }
   }, []);
+
+  async function loadSharedSummary(shareToken) {
+    try {
+      const data = await analyzeAPI.getSharedSummary(shareToken);
+      setSharedSummary(data);
+      setCurrentView('shared-summary');
+    } catch (err) {
+      console.error('Failed to load shared summary:', err);
+    }
+  }
 
   async function checkAuth() {
     const token = localStorage.getItem('token');
@@ -69,7 +93,9 @@ function App() {
         <main className="main-content">
           <Disclaimer />
 
-          {!user ? (
+          {sharedSummary ? (
+            <SharedSummaryView summary={sharedSummary} />
+          ) : !user ? (
             <AuthView onLogin={handleLogin} />
           ) : (
             <>
@@ -77,6 +103,8 @@ function App() {
               {currentView === 'analyze' && <AnalyzeView />}
               {currentView === 'profile' && <ProfileView />}
               {currentView === 'history' && <HistoryView />}
+              {currentView === 'notifications' && <NotificationsView />}
+              {currentView === 'exports' && <ExportsView />}
             </>
           )}
         </main>
@@ -114,6 +142,18 @@ function Header({ user, currentView, setCurrentView, onLogout }) {
               onClick={() => setCurrentView('history')}
             >
               History
+            </button>
+            <button
+              className={`nav-link ${currentView === 'notifications' ? 'active' : ''}`}
+              onClick={() => setCurrentView('notifications')}
+            >
+              🔔 Notifications
+            </button>
+            <button
+              className={`nav-link ${currentView === 'exports' ? 'active' : ''}`}
+              onClick={() => setCurrentView('exports')}
+            >
+              📤 Share
             </button>
             <button
               className={`nav-link ${currentView === 'profile' ? 'active' : ''}`}
@@ -239,9 +279,11 @@ function AuthView({ onLogin }) {
 function HomeView({ setCurrentView }) {
   const { user } = useAuth();
   const [balance, setBalance] = useState(null);
+  const [macros, setMacros] = useState(null);
 
   useEffect(() => {
     loadBalance();
+    loadMacros();
   }, []);
 
   async function loadBalance() {
@@ -250,6 +292,15 @@ function HomeView({ setCurrentView }) {
       setBalance(data);
     } catch (err) {
       console.error('Failed to load balance:', err);
+    }
+  }
+
+  async function loadMacros() {
+    try {
+      const data = await analyzeAPI.getTodayMacros();
+      setMacros(data);
+    } catch (err) {
+      console.error('Failed to load macros:', err);
     }
   }
 
@@ -292,6 +343,27 @@ function HomeView({ setCurrentView }) {
           </div>
 
           <p className="balance-reasoning">{balance.reasoning}</p>
+        </div>
+      )}
+
+      {macros && (
+        <div className="card">
+          <h3>Today's Macros</h3>
+          <MacroChart macros={macros} totalCalories={macros.total_calories} />
+          <div className="macro-details">
+            <div className="macro-detail-item">
+              <span className="macro-detail-label">Protein</span>
+              <span className="macro-detail-value">{macros.protein_g}g</span>
+            </div>
+            <div className="macro-detail-item">
+              <span className="macro-detail-label">Carbs</span>
+              <span className="macro-detail-value">{macros.carbs_g}g</span>
+            </div>
+            <div className="macro-detail-item">
+              <span className="macro-detail-label">Fat</span>
+              <span className="macro-detail-value">{macros.fat_g}g</span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -362,7 +434,26 @@ function AnalyzeView() {
         notes || null
       );
 
-      setResult(data);
+      // Check if barcode was detected in the image
+      if (data.vision?.barcode_detected) {
+        console.log('Barcode detected:', data.vision.barcode_detected);
+        // Call the barcode endpoint for full agent analysis
+        try {
+          const barcodeData = await analyzeAPI.scanBarcode(
+            data.vision.barcode_detected,
+            context || null,
+            notes || null
+          );
+          setResult(barcodeData);
+        } catch (barcodeErr) {
+          // If barcode lookup fails, show the error but allow user to continue
+          setError(`Barcode scan failed: ${barcodeErr.message}. Try uploading a food photo instead.`);
+          // Still show the meal analysis result if available
+          setResult(data);
+        }
+      } else {
+        setResult(data);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -759,6 +850,13 @@ function ProfileView() {
 function HistoryView() {
   const [meals, setMeals] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    startDate: '',
+    endDate: '',
+    context: '',
+    foodName: '',
+  });
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     loadHistory();
@@ -766,7 +864,8 @@ function HistoryView() {
 
   async function loadHistory() {
     try {
-      const data = await analyzeAPI.getHistory();
+      setLoading(true);
+      const data = await analyzeAPI.getHistory(20, 0, filters);
       setMeals(data);
     } catch (err) {
       console.error('Failed to load history:', err);
@@ -775,7 +874,25 @@ function HistoryView() {
     }
   }
 
-  if (loading) {
+  function handleFilterChange(field, value) {
+    setFilters(prev => ({ ...prev, [field]: value }));
+  }
+
+  function handleApplyFilters() {
+    loadHistory();
+    setShowFilters(false);
+  }
+
+  function handleClearFilters() {
+    setFilters({
+      startDate: '',
+      endDate: '',
+      context: '',
+      foodName: '',
+    });
+  }
+
+  if (loading && meals.length === 0) {
     return (
       <div className="loading-section">
         <div className="spinner"></div>
@@ -783,14 +900,94 @@ function HistoryView() {
     );
   }
 
+  const hasActiveFilters = Object.values(filters).some(v => v);
+
   return (
     <div className="history-view animate-fade-in">
-      <h2>Meal History 📊</h2>
+      <div className="history-header">
+        <h2>Meal History 📊</h2>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => setShowFilters(!showFilters)}
+        >
+          {showFilters ? '✕ Close' : '🔍 Filter'}
+        </button>
+      </div>
+
+      {showFilters && (
+        <div className="filter-panel card">
+          <div className="filter-group">
+            <label className="form-label">Start Date</label>
+            <input
+              type="date"
+              className="form-input"
+              value={filters.startDate}
+              onChange={(e) => handleFilterChange('startDate', e.target.value)}
+            />
+          </div>
+
+          <div className="filter-group">
+            <label className="form-label">End Date</label>
+            <input
+              type="date"
+              className="form-input"
+              value={filters.endDate}
+              onChange={(e) => handleFilterChange('endDate', e.target.value)}
+            />
+          </div>
+
+          <div className="filter-group">
+            <label className="form-label">Meal Context</label>
+            <select
+              className="form-select"
+              value={filters.context}
+              onChange={(e) => handleFilterChange('context', e.target.value)}
+            >
+              <option value="">All contexts</option>
+              <option value="homemade">🏠 Homemade</option>
+              <option value="restaurant">🍽️ Restaurant</option>
+              <option value="snack">🍿 Snack</option>
+              <option value="meal">🍱 Full Meal</option>
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label className="form-label">Search Food</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="e.g., chicken, salad..."
+              value={filters.foodName}
+              onChange={(e) => handleFilterChange('foodName', e.target.value)}
+            />
+          </div>
+
+          <div className="filter-actions">
+            <button className="btn btn-primary" onClick={handleApplyFilters}>
+              Apply Filters
+            </button>
+            {hasActiveFilters && (
+              <button className="btn btn-ghost" onClick={handleClearFilters}>
+                Clear All
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {hasActiveFilters && (
+        <div className="active-filters">
+          {filters.startDate && <span className="filter-tag">From {filters.startDate}</span>}
+          {filters.endDate && <span className="filter-tag">To {filters.endDate}</span>}
+          {filters.context && <span className="filter-tag">Context: {filters.context}</span>}
+          {filters.foodName && <span className="filter-tag">Search: {filters.foodName}</span>}
+        </div>
+      )}
 
       {meals.length === 0 ? (
         <div className="empty-state card">
           <span className="empty-icon">🍽️</span>
-          <p>No meals logged yet. Start by analyzing a meal!</p>
+          <p>{hasActiveFilters ? 'No meals match your filters.' : 'No meals logged yet. Start by analyzing a meal!'}</p>
         </div>
       ) : (
         <div className="meals-list">
@@ -799,7 +996,7 @@ function HistoryView() {
               <div className="meal-header">
                 <span className="meal-context">{meal.context || 'Meal'}</span>
                 <span className="meal-date">
-                  {new Date(meal.created_at).toLocaleDateString()}
+                  {new Date(meal.created_at).toLocaleDateString()} {new Date(meal.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
               </div>
 
@@ -809,14 +1006,142 @@ function HistoryView() {
                 ))}
               </div>
 
-              <div className="meal-calories">
-                {meal.nutrition_result?.total_calories?.min || 0} -
-                {meal.nutrition_result?.total_calories?.max || 0} cal
+              <div className="meal-nutrition">
+                <div className="nutrition-item">
+                  <span className="nutrition-label">Calories</span>
+                  <span className="nutrition-value">
+                    {meal.nutrition_result?.total_calories?.min || 0} -
+                    {meal.nutrition_result?.total_calories?.max || 0} kcal
+                  </span>
+                </div>
+                <div className="nutrition-item">
+                  <span className="nutrition-label">Macros</span>
+                  <span className="nutrition-value">
+                    P: {meal.nutrition_result?.macros?.protein || 'N/A'} |
+                    C: {meal.nutrition_result?.macros?.carbs || 'N/A'} |
+                    F: {meal.nutrition_result?.macros?.fat || 'N/A'}
+                  </span>
+                </div>
               </div>
+
+              {meal.wellness_result?.message && (
+                <div className="meal-message">
+                  {meal.wellness_result.emoji_indicator} {meal.wellness_result.message}
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Notifications View
+function NotificationsView() {
+  return (
+    <div className="notifications-view animate-fade-in">
+      <div className="view-header">
+        <h2>Notification Settings 🔔</h2>
+        <p className="text-muted">Manage your meal reminders and weekly summaries</p>
+      </div>
+      <div className="card">
+        <NotificationSettings />
+      </div>
+    </div>
+  );
+}
+
+// Exports View
+function ExportsView() {
+  return (
+    <div className="exports-view animate-fade-in">
+      <div className="view-header">
+        <h2>Share Your Wellness 📤</h2>
+        <p className="text-muted">Share your weekly wellness summary with others</p>
+      </div>
+      <div className="card">
+        <WeeklySummary />
+      </div>
+    </div>
+  );
+}
+
+// Shared Summary View (Public)
+function SharedSummaryView({ summary }) {
+  if (!summary) {
+    return (
+      <div className="loading-section">
+        <div className="spinner"></div>
+      </div>
+    );
+  }
+
+  const data = summary.summary;
+
+  return (
+    <div className="shared-summary-view animate-fade-in">
+      <div className="view-header">
+        <h2>Wellness Summary 🌟</h2>
+        <p className="text-muted">Week of {new Date(data.week_start).toLocaleDateString()}</p>
+      </div>
+
+      <div className="card">
+        <div className="summary-grid">
+          <div className="summary-card">
+            <span className="summary-label">Meals Logged</span>
+            <span className="summary-value">{data.meals_logged}</span>
+          </div>
+          <div className="summary-card">
+            <span className="summary-label">Days Tracked</span>
+            <span className="summary-value">{data.days_tracked}/7</span>
+          </div>
+          <div className="summary-card">
+            <span className="summary-label">Total Calories</span>
+            <span className="summary-value">{Math.round(data.total_calories)}</span>
+          </div>
+          <div className="summary-card">
+            <span className="summary-label">Daily Average</span>
+            <span className="summary-value">{Math.round(data.average_calories_per_day)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h4>Macro Breakdown</h4>
+        <div className="macro-breakdown">
+          <div className="macro-item">
+            <span className="macro-name">Protein</span>
+            <span className="macro-value">{data.macros.protein_g}g</span>
+            <span className="macro-pct">{data.macros.protein_pct}%</span>
+          </div>
+          <div className="macro-item">
+            <span className="macro-name">Carbs</span>
+            <span className="macro-value">{data.macros.carbs_g}g</span>
+            <span className="macro-pct">{data.macros.carbs_pct}%</span>
+          </div>
+          <div className="macro-item">
+            <span className="macro-name">Fat</span>
+            <span className="macro-value">{data.macros.fat_g}g</span>
+            <span className="macro-pct">{data.macros.fat_pct}%</span>
+          </div>
+        </div>
+      </div>
+
+      {data.wellness_highlights && data.wellness_highlights.length > 0 && (
+        <div className="card">
+          <h4>Wellness Highlights</h4>
+          <ul className="insights-list">
+            {data.wellness_highlights.map((insight, i) => (
+              <li key={i}>💡 {insight}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="card" style={{ textAlign: 'center', color: '#666' }}>
+        <p>✨ This is a shared wellness summary. No personal data is included.</p>
+      </div>
     </div>
   );
 }

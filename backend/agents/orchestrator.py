@@ -39,7 +39,6 @@ class MealAnalysisOrchestrator:
         self.nutrition_agent = NutritionReasonerAgent()
         self.personalization_agent = PersonalizationAgent()
         self.wellness_agent = WellnessCoachAgent()
-        # New agentic agents
         self.drift_detector = DriftDetectionAgent()
         self.next_action_agent = NextActionAgent()
         self.strategy_adapter = AdaptiveStrategyAgent()
@@ -86,6 +85,19 @@ class MealAnalysisOrchestrator:
             )
             results["agents"]["vision"] = vision_result
             results["vision_result"] = vision_result
+            
+            # Check if barcode was detected
+            if vision_result.get("is_barcode_image") and vision_result.get("barcode_detected"):
+                barcode = vision_result.get("barcode_detected")
+                print(f"Barcode detected in image: {barcode}. Frontend should call /analyze/barcode endpoint.")
+                
+                # Return barcode to frontend - let /barcode endpoint handle it
+                return {
+                    "barcode_detected": True,
+                    "barcode": barcode,
+                    "message": f"Barcode detected: {barcode}. Please use the barcode endpoint for analysis.",
+                    "next_action": "POST /analyze/barcode with barcode parameter"
+                }
             
             # Log metrics to Opik
             OpikMetrics.log_image_ambiguity(vision_result.get("image_ambiguity", "unknown"))
@@ -230,7 +242,7 @@ class MealAnalysisOrchestrator:
             results["agents"]["goal_guardian"] = {"error": str(e)}
         
         try:
-            # Agent 8: Strategy Adapter (Adaptive Strategy)
+            # Agent 8: Strategy Adapter
             all_meals_for_context = (historical_meals or []) + [current_meal_entry]
             strategy_result = await self.strategy_adapter.process(
                 context={

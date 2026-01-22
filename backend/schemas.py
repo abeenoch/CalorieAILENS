@@ -73,6 +73,7 @@ class VisionResult(BaseModel):
     foods: List[FoodItem]
     image_ambiguity: str
     context_applied: Optional[str] = None
+    barcode_detected: Optional[str] = None
 
 
 class NutritionResult(BaseModel):
@@ -160,3 +161,28 @@ class HealthCheck(BaseModel):
     status: str = "healthy"
     version: str = "1.0.0"
     timestamp: datetime
+
+
+class NotificationPreferenceUpdate(BaseModel):
+    """Schema for updating notification preferences."""
+    meal_reminders_enabled: Optional[bool] = None
+    meal_reminder_time: Optional[str] = Field(None, description="Time in HH:MM format, e.g., '12:00'")
+    weekly_summary_enabled: Optional[bool] = None
+    weekly_summary_day: Optional[str] = Field(None, description="Day of week: 'monday', 'sunday', etc.")
+    weekly_summary_time: Optional[str] = Field(None, description="Time in HH:MM format, e.g., '19:00'")
+
+
+class NotificationPreferenceResponse(BaseModel):
+    """Schema for notification preferences response."""
+    meal_reminders_enabled: bool
+    meal_reminder_time: Optional[str]
+    weekly_summary_enabled: bool
+    weekly_summary_day: Optional[str]
+    weekly_summary_time: Optional[str]
+
+
+class WeeklyExportResponse(BaseModel):
+    """Schema for weekly export response."""
+    share_token: str
+    share_url: str
+    summary: dict
