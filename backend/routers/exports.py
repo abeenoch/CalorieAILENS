@@ -130,8 +130,10 @@ async def calculate_weekly_summary(meals: list, user: User, db: AsyncSession):
     # Get AI-powered insights from weekly reflection agent
     energy_tags = []
     for meal in meals:
-        if meal.energy_tags:
-            energy_tags.extend(meal.energy_tags)
+        wellness = meal.wellness_result or {}
+        # Extract energy tags from wellness result if they exist
+        if wellness.get("energy_tags"):
+            energy_tags.extend(wellness["energy_tags"])
     
     reflection_context = {
         "user_id": user.id,
@@ -139,7 +141,7 @@ async def calculate_weekly_summary(meals: list, user: User, db: AsyncSession):
             {
                 "time": meal.created_at.strftime("%H:%M"),
                 "date": meal.created_at.strftime("%Y-%m-%d"),
-                "energy_after": meal.energy_tags[0] if meal.energy_tags else "neutral"
+                "energy_after": (meal.wellness_result or {}).get("emoji_indicator", "neutral") if meal.wellness_result else "neutral"
             }
             for meal in meals
         ],
@@ -215,6 +217,8 @@ async def get_weekly_summary(
     """
     monday, sunday = get_week_bounds()
     
+    print(f"DEBUG: Querying meals for user {current_user.id} between {monday} and {sunday}")
+    
     # Get meals for this week
     result = await db.execute(
         select(Meal).where(
@@ -226,6 +230,8 @@ async def get_weekly_summary(
         ).order_by(Meal.created_at)
     )
     meals = result.scalars().all()
+    
+    print(f"DEBUG: Found {len(meals)} meals for this week")
     
     # Calculate summary with AI insights
     summary_data = await calculate_weekly_summary(meals, current_user, db)
