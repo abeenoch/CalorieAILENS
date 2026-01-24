@@ -30,6 +30,7 @@ class TokenData(BaseModel):
 
 class ProfileUpdate(BaseModel):
     """Schema for updating user profile - all ranges, not exact numbers."""
+    gender: Optional[str] = Field(None, description="Gender: 'male', 'female', 'other'")
     age_range: Optional[str] = Field(None, description="Age range: '18-25', '26-35', '36-45', '46-55', '55+'")
     height_range: Optional[str] = Field(None, description="Height range: '150-160cm', '160-170cm', etc.")
     weight_range: Optional[str] = Field(None, description="Weight range: '50-60kg', '60-70kg', etc.")
@@ -41,6 +42,7 @@ class ProfileResponse(BaseModel):
     """Schema for profile response."""
     id: int
     email: str
+    gender: Optional[str] = None
     age_range: Optional[str] = None
     height_range: Optional[str] = None
     weight_range: Optional[str] = None

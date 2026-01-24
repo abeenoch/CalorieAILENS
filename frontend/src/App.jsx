@@ -5,10 +5,12 @@ import './styles/macro-chart.css';
 import './styles/history.css';
 import './styles/home.css';
 import './styles/notifications-exports.css';
+import './styles/onboarding.css';
 import { authAPI, profileAPI, analyzeAPI, balanceAPI, feedbackAPI } from './api';
 import { MacroChart } from './components/MacroChart';
 import { NotificationSettings } from './components/NotificationSettings';
 import { WeeklySummary } from './components/WeeklySummary';
+import { Onboarding } from './components/Onboarding';
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -60,9 +62,13 @@ function App() {
   function handleLogin(userData, token) {
     localStorage.setItem('token', token);
     setUser(userData);
-    // Redirect to profile if first-time user (no profile data set)
+    // Check if first-time user (no profile data set)
     const isFirstTimeUser = !userData.age_range && !userData.height_range && !userData.weight_range;
-    setCurrentView(isFirstTimeUser ? 'profile' : 'home');
+    if (isFirstTimeUser) {
+      setCurrentView('onboarding');
+    } else {
+      setCurrentView('home');
+    }
   }
 
   function handleLogout() {
@@ -99,6 +105,14 @@ function App() {
             <AuthView onLogin={handleLogin} />
           ) : (
             <>
+              {currentView === 'onboarding' && (
+                <Onboarding
+                  onComplete={(updatedUser) => {
+                    setUser(updatedUser);
+                    setCurrentView('home');
+                  }}
+                />
+              )}
               {currentView === 'home' && <HomeView setCurrentView={setCurrentView} />}
               {currentView === 'analyze' && <AnalyzeView />}
               {currentView === 'profile' && <ProfileView />}
@@ -670,6 +684,7 @@ function ProfileView() {
   const [options, setOptions] = useState(null);
   const [useCustomGoal, setUseCustomGoal] = useState(false);
   const [form, setForm] = useState({
+    gender: user?.gender || '',
     age_range: user?.age_range || '',
     height_range: user?.height_range || '',
     weight_range: user?.weight_range || '',
@@ -681,11 +696,27 @@ function ProfileView() {
 
   useEffect(() => {
     loadOptions();
-    // Check if goal is custom (not in predefined list)
-    if (user?.goal && options?.goals && !options.goals.find(g => g.value === user.goal)) {
-      setUseCustomGoal(true);
-    }
   }, []);
+
+  useEffect(() => {
+    // Update form when user data changes
+    setForm({
+      gender: user?.gender || '',
+      age_range: user?.age_range || '',
+      height_range: user?.height_range || '',
+      weight_range: user?.weight_range || '',
+      activity_level: user?.activity_level || '',
+      goal: user?.goal || '',
+    });
+  }, [user]);
+
+  useEffect(() => {
+    // Check if goal is custom (not in predefined list) after options load
+    if (user?.goal && options?.goals) {
+      const isCustom = !options.goals.find(g => g.value === user.goal);
+      setUseCustomGoal(isCustom);
+    }
+  }, [options, user?.goal]);
 
   async function loadOptions() {
     try {
@@ -728,6 +759,20 @@ function ProfileView() {
       </div>
 
       <div className="card profile-card">
+        <div className="form-group">
+          <label className="form-label">Gender</label>
+          <select
+            className="form-select"
+            value={form.gender}
+            onChange={(e) => setForm({ ...form, gender: e.target.value })}
+          >
+            <option value="">Select your gender...</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
         <div className="form-group">
           <label className="form-label">Age Range</label>
           <select

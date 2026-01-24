@@ -14,11 +14,12 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     
     # Lightweight profile - all ranges, not exact numbers (safety win)
+    gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "male", "female", "other"
     age_range: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "18-25", "26-35", etc.
     height_range: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "150-160cm", etc.
     weight_range: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "50-60kg", etc.
     activity_level: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "low", "medium", "high"
-    goal: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # "maintain", "gain_energy", "reduce_excess"
+    goal: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # "maintain", "gain_energy", "reduce_excess", or custom
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
