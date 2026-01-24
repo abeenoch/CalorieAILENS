@@ -15,9 +15,19 @@ export function WeeklySummary() {
     try {
       setLoading(true);
       const data = await exportsAPI.getWeeklySummary();
+      console.log('Weekly summary loaded:', data);
       setSummary(data);
     } catch (err) {
       console.error('Failed to load weekly summary:', err);
+      // Set a default summary so the component still renders
+      setSummary({
+        meals_logged: 0,
+        days_tracked: 0,
+        total_calories: 0,
+        average_calories_per_day: 0,
+        macros: { protein_g: 0, carbs_g: 0, fat_g: 0, protein_pct: 0, carbs_pct: 0, fat_pct: 0 },
+        wellness_highlights: [`Error loading summary: ${err.message}`]
+      });
     } finally {
       setLoading(false);
     }

@@ -59,6 +59,28 @@ async def calculate_weekly_summary(meals: list, user: User, db: AsyncSession):
     """
     monday, sunday = get_week_bounds()
     
+    # Handle case with no meals
+    if not meals:
+        return {
+            "week_start": monday.isoformat(),
+            "week_end": sunday.isoformat(),
+            "meals_logged": 0,
+            "days_tracked": 0,
+            "total_calories": 0,
+            "macros": {
+                "protein_g": 0,
+                "carbs_g": 0,
+                "fat_g": 0,
+                "protein_pct": 0,
+                "carbs_pct": 0,
+                "fat_pct": 0
+            },
+            "average_calories_per_day": 0,
+            "consistency": "0/7 days tracked",
+            "wellness_highlights": ["Start logging meals to see your wellness insights!"],
+            "reflection_message": ""
+        }
+    
     # Calculate summary statistics
     total_calories = 0
     total_protein_calories = 0
@@ -133,7 +155,14 @@ async def calculate_weekly_summary(meals: list, user: User, db: AsyncSession):
     }
     
     # Call weekly reflection agent
-    reflection_result = await weekly_reflection_agent.process(reflection_context)
+    try:
+        reflection_result = await weekly_reflection_agent.process(reflection_context)
+    except Exception as e:
+        print(f"Error calling weekly reflection agent: {e}")
+        reflection_result = {
+            "week_incomplete": True,
+            "reflection_message": "Keep logging to see patterns!"
+        }
     
     # Extract wellness highlights from reflection
     wellness_highlights = []
