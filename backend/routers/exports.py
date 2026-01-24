@@ -299,7 +299,7 @@ async def create_shareable_weekly_summary(
     }
 
 
-@router.get("/shared/{share_token}", response_class=None)
+@router.get("/shared/{share_token}")
 async def get_shared_summary(
     share_token: str,
     db: AsyncSession = Depends(get_db)
@@ -308,7 +308,6 @@ async def get_shared_summary(
     Get a publicly shared weekly summary.
     
     No authentication required - anyone with the token can view.
-    Returns JSON data that the frontend can render.
     """
     result = await db.execute(
         select(WeeklyExport).where(
