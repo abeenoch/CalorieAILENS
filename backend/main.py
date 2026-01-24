@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     # Initialize Opik
     init_opik()
     
-    # Print config info (without sensitive data)
+    # Print config info 
     print(f"Opik Project: {settings.opik_project_name}")
     print(f"Gemini Model: {settings.gemini_model}")
     print("All systems ready!")
@@ -71,14 +71,14 @@ A multi-agent AI system for analyzing meals and providing supportive wellness gu
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],  #
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Include routers
+# Include routers FIRST 
 app.include_router(auth.router)
 app.include_router(profile.router)
 app.include_router(analyze.router)
@@ -89,19 +89,6 @@ app.include_router(exports.router)
 app.include_router(debug.router)
 app.include_router(metrics.router)
 app.include_router(experiments.router)
-
-
-# Serve static frontend files
-# Build frontend first: cd frontend && npm run build
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
-if frontend_dist.exists():
-    # Mount static files with html=True to serve index.html for all routes
-    # This allows the React app to handle client-side routing
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
-    print(f"Frontend static files mounted from {frontend_dist}")
-else:
-    print(f"Frontend dist not found at {frontend_dist}")
-    print("   Run: cd frontend && npm run build")
 
 
 @app.get("/", tags=["Root"])
@@ -124,6 +111,19 @@ async def health_check():
         version="1.0.0",
         timestamp=datetime.utcnow()
     )
+
+
+# Serve static frontend files LAST (after all API routes)
+# Build frontend first: cd frontend && npm run build
+frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    # Mount static files with html=True to serve index.html for all routes
+    # for react
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+    print(f"Frontend static files mounted from {frontend_dist}")
+else:
+    print(f"Frontend dist not found at {frontend_dist}")
+    print("   Run: cd frontend && npm run build")
 
 
 if __name__ == "__main__":
