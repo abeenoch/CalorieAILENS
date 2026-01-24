@@ -25,10 +25,13 @@ export function WeeklySummary() {
 
   async function handleShare() {
     try {
+      console.log('Share button clicked, calling API...');
       const result = await exportsAPI.createShareableWeeklySummary();
+      console.log('Share API response:', result);
       setShareToken(result.share_token);
     } catch (err) {
       console.error('Failed to create shareable summary:', err);
+      alert(`Error: ${err.message}`);
     }
   }
 
