@@ -107,7 +107,7 @@ Frontend runs at http://localhost:5173
 
 ### Profile
 - `GET /profile` - Get user profile
-- `PUT /profile` - Update profile (age_range, height_range, weight_range, activity_level, goal)
+- `PUT /profile` - Update profile (gender,age_range, height_range, weight_range, activity_level, goal)
 - `GET /profile/options` - Get valid options for form building
 
 ### Meal Analysis
