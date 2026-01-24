@@ -8,8 +8,11 @@ from database import get_db
 from models import User, NotificationPreference, Meal
 from schemas import NotificationPreferenceUpdate, NotificationPreferenceResponse
 from auth import get_current_user
+from agents.wellness_coach import WellnessCoachAgent
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
+
+wellness_coach = WellnessCoachAgent()
 
 
 @router.get("/preferences", response_model=NotificationPreferenceResponse)
@@ -98,9 +101,9 @@ async def check_meal_reminder(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Check if user should receive a meal reminder.
+    Check if user should receive a meal reminder with personalized message.
     
-    Returns whether the user has meal reminders enabled and if it's time to send one.
+    Uses the wellness coach agent to generate an encouraging, personalized message.
     """
     result = await db.execute(
         select(NotificationPreference).where(
@@ -125,8 +128,45 @@ async def check_meal_reminder(
     if len(meals_today) > 0:
         return {"should_remind": False, "reason": "Meal already logged today"}
     
+    # Get recent meals for context
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    result = await db.execute(
+        select(Meal).where(
+            Meal.user_id == current_user.id,
+            Meal.created_at >= week_ago
+        ).order_by(Meal.created_at.desc())
+    )
+    recent_meals = result.scalars().all()
+    
+    # Generate personalized message using wellness coach agent
+    coach_context = {
+        "user_id": current_user.id,
+        "user_goal": current_user.goal or "general wellness",
+        "recent_meals": [
+            {
+                "foods": meal.foods_identified or [],
+                "time": meal.created_at.strftime("%H:%M"),
+                "date": meal.created_at.strftime("%Y-%m-%d")
+            }
+            for meal in recent_meals[:5]
+        ],
+        "user_profile": {
+            "age_range": current_user.age_range,
+            "activity_level": current_user.activity_level,
+            "goal": current_user.goal
+        },
+        "context": "meal_reminder",
+        "time_of_day": datetime.utcnow().strftime("%H:%M")
+    }
+    
+    # Call wellness coach for personalized message
+    coach_result = await wellness_coach.process(coach_context)
+    
+    reminder_message = coach_result.get("message", "Time to log a meal!")
+    
     return {
         "should_remind": True,
-        "message": "Time to log a meal!",
-        "reminder_time": prefs.meal_reminder_time
+        "message": reminder_message,
+        "reminder_time": prefs.meal_reminder_time,
+        "emoji": coach_result.get("emoji_indicator", "🍽️")
     }

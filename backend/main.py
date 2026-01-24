@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from config import get_settings
 from database import init_db
 from services.opik_service import init_opik
-from routers import auth, profile, analyze, feedback, balance, debug, metrics, experiments, notifications, exports
+from routers import auth, profile, analyze, feedback, balance, debug, metrics, notifications, exports
 from schemas import HealthCheck
 
 settings = get_settings()
@@ -88,19 +88,6 @@ app.include_router(notifications.router)
 app.include_router(exports.router)
 app.include_router(debug.router)
 app.include_router(metrics.router)
-app.include_router(experiments.router)
-
-
-@app.get("/", tags=["Root"])
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "Calorie Tracker API",
-        "version": "1.0.0",
-        "description": "Wellness-focused calorie tracker with multi-agent AI",
-        "docs": "/docs",
-        "disclaimer": "This app provides general wellness insights, not medical advice."
-    }
 
 
 @app.get("/health", response_model=HealthCheck, tags=["Health"])

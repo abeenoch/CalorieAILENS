@@ -10,10 +10,12 @@ from models import User, Meal, WeeklyExport
 from schemas import WeeklyExportResponse
 from auth import get_current_user
 from agents import MealAnalysisOrchestrator
+from agents.weekly_reflection import WeeklyReflectionAgent
 
 router = APIRouter(prefix="/exports", tags=["Exports"])
 
 orchestrator = MealAnalysisOrchestrator()
+weekly_reflection_agent = WeeklyReflectionAgent()
 
 
 def get_week_bounds(date: datetime = None):
@@ -32,29 +34,30 @@ def get_week_bounds(date: datetime = None):
     return monday, sunday
 
 
-@router.get("/weekly-summary")
-async def get_weekly_summary(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
+def extract_percentage(value):
+    """Extract percentage from strings like '20-25%'."""
+    if not value or value == "N/A":
+        return 0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        value = value.strip()
+        if "%" in value:
+            try:
+                num_str = value.split("-")[0].replace("%", "").strip()
+                return float(num_str)
+            except ValueError:
+                return 0
+    return 0
+
+
+async def calculate_weekly_summary(meals: list, user: User, db: AsyncSession):
     """
-    Get this week's summary (insights, macros, patterns).
+    Calculate weekly summary statistics and get AI-powered insights.
     
-    Returns high-level wellness insights without obsessive tracking data.
+    Returns summary data with wellness highlights from the weekly reflection agent.
     """
     monday, sunday = get_week_bounds()
-    
-    # Get meals for this week
-    result = await db.execute(
-        select(Meal).where(
-            and_(
-                Meal.user_id == current_user.id,
-                Meal.created_at >= monday,
-                Meal.created_at <= sunday
-            )
-        ).order_by(Meal.created_at)
-    )
-    meals = result.scalars().all()
     
     # Calculate summary statistics
     total_calories = 0
@@ -62,22 +65,6 @@ async def get_weekly_summary(
     total_carbs_calories = 0
     total_fat_calories = 0
     days_with_meals = set()
-    
-    def extract_percentage(value):
-        """Extract percentage from strings like '20-25%'."""
-        if not value or value == "N/A":
-            return 0
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            value = value.strip()
-            if "%" in value:
-                try:
-                    num_str = value.split("-")[0].replace("%", "").strip()
-                    return float(num_str)
-                except ValueError:
-                    return 0
-        return 0
     
     for meal in meals:
         nutrition = meal.nutrition_result or {}
@@ -118,16 +105,42 @@ async def get_weekly_summary(
     else:
         protein_pct = carbs_pct = fat_pct = 0
     
-    # Collect unique wellness messages for insights
-    wellness_messages = []
-    seen_messages = set()
+    # Get AI-powered insights from weekly reflection agent
+    energy_tags = []
     for meal in meals:
-        wellness = meal.wellness_result or {}
-        if wellness.get("message"):
-            msg = wellness["message"]
-            if msg not in seen_messages:
-                wellness_messages.append(msg)
-                seen_messages.add(msg)
+        if meal.energy_tags:
+            energy_tags.extend(meal.energy_tags)
+    
+    reflection_context = {
+        "user_id": user.id,
+        "recent_meals": [
+            {
+                "time": meal.created_at.strftime("%H:%M"),
+                "date": meal.created_at.strftime("%Y-%m-%d"),
+                "energy_after": meal.energy_tags[0] if meal.energy_tags else "neutral"
+            }
+            for meal in meals
+        ],
+        "user_goal": user.goal or "general wellness",
+        "user_profile": {
+            "age_range": user.age_range,
+            "activity_level": user.activity_level,
+            "goal": user.goal
+        },
+        "energy_tags": energy_tags,
+        "days_active": len(days_with_meals),
+        "interventions_accepted": 0
+    }
+    
+    # Call weekly reflection agent
+    reflection_result = await weekly_reflection_agent.process(reflection_context)
+    
+    # Extract wellness highlights from reflection
+    wellness_highlights = []
+    if reflection_result.get("wins_this_week"):
+        wellness_highlights.extend(reflection_result["wins_this_week"][:2])
+    if reflection_result.get("gentle_focus"):
+        wellness_highlights.append(reflection_result["gentle_focus"])
     
     # Build summary
     summary_data = {
@@ -146,8 +159,39 @@ async def get_weekly_summary(
         },
         "average_calories_per_day": round(total_calories / len(days_with_meals), 1) if days_with_meals else 0,
         "consistency": f"{len(days_with_meals)}/7 days tracked",
-        "wellness_highlights": wellness_messages[:3]  # Top 3 unique insights
+        "wellness_highlights": wellness_highlights[:3],  # AI-powered insights
+        "reflection_message": reflection_result.get("reflection_message", "")
     }
+    
+    return summary_data
+
+
+@router.get("/weekly-summary")
+async def get_weekly_summary(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get this week's summary with AI-powered insights from the weekly reflection agent.
+    
+    Returns high-level wellness insights without obsessive tracking data.
+    """
+    monday, sunday = get_week_bounds()
+    
+    # Get meals for this week
+    result = await db.execute(
+        select(Meal).where(
+            and_(
+                Meal.user_id == current_user.id,
+                Meal.created_at >= monday,
+                Meal.created_at <= sunday
+            )
+        ).order_by(Meal.created_at)
+    )
+    meals = result.scalars().all()
+    
+    # Calculate summary with AI insights
+    summary_data = await calculate_weekly_summary(meals, current_user, db)
     
     return summary_data
 
@@ -176,88 +220,8 @@ async def create_shareable_weekly_summary(
     )
     meals = result.scalars().all()
     
-    # Calculate summary (same as above)
-    total_calories = 0
-    total_protein_calories = 0
-    total_carbs_calories = 0
-    total_fat_calories = 0
-    days_with_meals = set()
-    
-    def extract_percentage(value):
-        if not value or value == "N/A":
-            return 0
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            value = value.strip()
-            if "%" in value:
-                try:
-                    num_str = value.split("-")[0].replace("%", "").strip()
-                    return float(num_str)
-                except ValueError:
-                    return 0
-        return 0
-    
-    for meal in meals:
-        nutrition = meal.nutrition_result or {}
-        macros = nutrition.get("macros", {})
-        days_with_meals.add(meal.created_at.date())
-        
-        cal_range = nutrition.get("total_calories", {})
-        if cal_range:
-            cal_min = cal_range.get("min", 0)
-            cal_max = cal_range.get("max", 0)
-            meal_calories = (cal_min + cal_max) / 2
-            total_calories += meal_calories
-            
-            protein_pct = extract_percentage(macros.get("protein", 0))
-            carbs_pct = extract_percentage(macros.get("carbs", 0))
-            fat_pct = extract_percentage(macros.get("fat", 0))
-            
-            total_protein_calories += (protein_pct / 100) * meal_calories
-            total_carbs_calories += (carbs_pct / 100) * meal_calories
-            total_fat_calories += (fat_pct / 100) * meal_calories
-    
-    total_protein_g = total_protein_calories / 4 if total_protein_calories > 0 else 0
-    total_carbs_g = total_carbs_calories / 4 if total_carbs_calories > 0 else 0
-    total_fat_g = total_fat_calories / 9 if total_fat_calories > 0 else 0
-    
-    macro_calories_total = total_protein_calories + total_carbs_calories + total_fat_calories
-    if macro_calories_total > 0:
-        protein_pct = round((total_protein_calories / macro_calories_total) * 100, 1)
-        carbs_pct = round((total_carbs_calories / macro_calories_total) * 100, 1)
-        fat_pct = round((total_fat_calories / macro_calories_total) * 100, 1)
-    else:
-        protein_pct = carbs_pct = fat_pct = 0
-    
-    wellness_messages = []
-    seen_messages = set()
-    for meal in meals:
-        wellness = meal.wellness_result or {}
-        if wellness.get("message"):
-            msg = wellness["message"]
-            if msg not in seen_messages:
-                wellness_messages.append(msg)
-                seen_messages.add(msg)
-    
-    summary_data = {
-        "week_start": monday.isoformat(),
-        "week_end": sunday.isoformat(),
-        "meals_logged": len(meals),
-        "days_tracked": len(days_with_meals),
-        "total_calories": round(total_calories, 1),
-        "macros": {
-            "protein_g": round(total_protein_g, 1),
-            "carbs_g": round(total_carbs_g, 1),
-            "fat_g": round(total_fat_g, 1),
-            "protein_pct": protein_pct,
-            "carbs_pct": carbs_pct,
-            "fat_pct": fat_pct
-        },
-        "average_calories_per_day": round(total_calories / len(days_with_meals), 1) if days_with_meals else 0,
-        "consistency": f"{len(days_with_meals)}/7 days tracked",
-        "wellness_highlights": wellness_messages[:3]
-    }
+    # Calculate summary with AI insights
+    summary_data = await calculate_weekly_summary(meals, current_user, db)
     
     # Generate share token
     share_token = secrets.token_urlsafe(32)
