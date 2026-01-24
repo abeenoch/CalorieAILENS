@@ -27,22 +27,27 @@ function App() {
   const [sharedSummary, setSharedSummary] = useState(null);
 
   useEffect(() => {
-    checkAuth();
-    // Check if we're viewing a shared summary
+    // Check if we're viewing a shared summary FIRST
     const path = window.location.pathname;
     if (path.startsWith('/exports/shared/')) {
       const shareToken = path.split('/').pop();
       loadSharedSummary(shareToken);
+      setLoading(false); // Don't wait for auth check on shared pages
+    } else {
+      checkAuth();
     }
   }, []);
 
   async function loadSharedSummary(shareToken) {
     try {
+      console.log('Loading shared summary for token:', shareToken);
       const data = await exportsAPI.getSharedSummary(shareToken);
+      console.log('Shared summary loaded:', data);
       setSharedSummary(data);
       setCurrentView('shared-summary');
     } catch (err) {
       console.error('Failed to load shared summary:', err);
+      setLoading(false);
     }
   }
 

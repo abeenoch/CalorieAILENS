@@ -95,6 +95,8 @@ app.include_router(experiments.router)
 # Build frontend first: cd frontend && npm run build
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
+    # Mount static files with html=True to serve index.html for all routes
+    # This allows the React app to handle client-side routing
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
     print(f"Frontend static files mounted from {frontend_dist}")
 else:
