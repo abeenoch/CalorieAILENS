@@ -6,7 +6,7 @@ import './styles/history.css';
 import './styles/home.css';
 import './styles/notifications-exports.css';
 import './styles/onboarding.css';
-import { authAPI, profileAPI, analyzeAPI, balanceAPI, feedbackAPI } from './api';
+import { authAPI, profileAPI, analyzeAPI, balanceAPI, feedbackAPI, exportsAPI } from './api';
 import { MacroChart } from './components/MacroChart';
 import { NotificationSettings } from './components/NotificationSettings';
 import { WeeklySummary } from './components/WeeklySummary';
@@ -38,7 +38,7 @@ function App() {
 
   async function loadSharedSummary(shareToken) {
     try {
-      const data = await analyzeAPI.getSharedSummary(shareToken);
+      const data = await exportsAPI.getSharedSummary(shareToken);
       setSharedSummary(data);
       setCurrentView('shared-summary');
     } catch (err) {
