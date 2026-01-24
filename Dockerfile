@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y \
     g++ \
     make \
     cmake \
+    libzbar0 \
+    libzbar-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend requirements
