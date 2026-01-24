@@ -137,10 +137,18 @@ async def calculate_weekly_summary(meals: list, user: User, db: AsyncSession):
     
     # Extract wellness highlights from reflection
     wellness_highlights = []
-    if reflection_result.get("wins_this_week"):
-        wellness_highlights.extend(reflection_result["wins_this_week"][:2])
-    if reflection_result.get("gentle_focus"):
-        wellness_highlights.append(reflection_result["gentle_focus"])
+    
+    # If we have enough data, use agent insights
+    if not reflection_result.get("week_incomplete"):
+        if reflection_result.get("wins_this_week"):
+            wellness_highlights.extend(reflection_result["wins_this_week"][:2])
+        if reflection_result.get("gentle_focus"):
+            wellness_highlights.append(reflection_result["gentle_focus"])
+    else:
+        # For early weeks, show encouraging message
+        wellness_highlights.append(reflection_result.get("reflection_message", "Keep logging to see patterns!"))
+        if len(meals) > 0:
+            wellness_highlights.append(f"Great start! You've logged {len(meals)} meal{'s' if len(meals) != 1 else ''}.")
     
     # Build summary
     summary_data = {
