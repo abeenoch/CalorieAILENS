@@ -46,14 +46,11 @@
   gap: var(--space-md);
   cursor: pointer;
   transition: all var(--transition-fast);
+  color: var(--color-primary);
 }
 
 .logo:hover {
   opacity: 0.9;
-}
-
-.logo-icon {
-  font-size: 1.75rem;
 }
 
 .logo-text {
@@ -70,6 +67,9 @@
 }
 
 .nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   background: none;
   border: none;
@@ -98,6 +98,8 @@
 }
 
 .nav-link.logout:hover {
+  background: rgba(255, 107, 107, 0.1);
+}
   background: rgba(255, 107, 107, 0.1);
   color: #ff8787;
 }

@@ -11,6 +11,18 @@ import { MacroChart } from './components/MacroChart';
 import { NotificationSettings } from './components/NotificationSettings';
 import { WeeklySummary } from './components/WeeklySummary';
 import { Onboarding } from './components/Onboarding';
+import { LandingPage } from './components/LandingPage';
+import './styles/landing-page.css';
+import {
+  Home,
+  Camera,
+  History,
+  Bell,
+  Share2,
+  Settings,
+  LogOut,
+  Apple
+} from 'lucide-react';
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -25,6 +37,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState('home');
   const [sharedSummary, setSharedSummary] = useState(null);
+  const [showAuthForm, setShowAuthForm] = useState(false);
 
   useEffect(() => {
     // Check if we're viewing a shared summary FIRST
@@ -80,6 +93,7 @@ function App() {
     localStorage.removeItem('token');
     setUser(null);
     setCurrentView('home');
+    setShowAuthForm(false);
   }
 
   if (loading) {
@@ -107,7 +121,14 @@ function App() {
           {sharedSummary ? (
             <SharedSummaryView summary={sharedSummary} />
           ) : !user ? (
-            <AuthView onLogin={handleLogin} />
+            showAuthForm ? (
+              <AuthView onLogin={handleLogin} />
+            ) : (
+              <LandingPage 
+                onSignUpClick={() => setShowAuthForm(true)}
+                onLoginClick={() => setShowAuthForm(true)}
+              />
+            )
           ) : (
             <>
               {currentView === 'onboarding' && (
@@ -138,7 +159,7 @@ function Header({ user, currentView, setCurrentView, onLogout }) {
     <header className="header">
       <div className="header-content">
         <div className="logo" onClick={() => setCurrentView('home')}>
-          <span className="logo-icon">🍎</span>
+          <Apple size={24} />
           <span className="logo-text">Calorie Tracker</span>
         </div>
 
@@ -147,41 +168,54 @@ function Header({ user, currentView, setCurrentView, onLogout }) {
             <button
               className={`nav-link ${currentView === 'home' ? 'active' : ''}`}
               onClick={() => setCurrentView('home')}
+              title="Home"
             >
-              Home
+              <Home size={20} />
+              <span>Home</span>
             </button>
             <button
               className={`nav-link ${currentView === 'analyze' ? 'active' : ''}`}
               onClick={() => setCurrentView('analyze')}
+              title="Analyze Meal"
             >
-              📷 Analyze
+              <Camera size={20} />
+              <span>Analyze</span>
             </button>
             <button
               className={`nav-link ${currentView === 'history' ? 'active' : ''}`}
               onClick={() => setCurrentView('history')}
+              title="Meal History"
             >
-              History
+              <History size={20} />
+              <span>History</span>
             </button>
             <button
               className={`nav-link ${currentView === 'notifications' ? 'active' : ''}`}
               onClick={() => setCurrentView('notifications')}
+              title="Notifications"
             >
-              🔔 Notifications
+              <Bell size={20} />
+              <span>Notifications</span>
             </button>
             <button
               className={`nav-link ${currentView === 'exports' ? 'active' : ''}`}
               onClick={() => setCurrentView('exports')}
+              title="Share Summary"
             >
-              📤 Share
+              <Share2 size={20} />
+              <span>Share</span>
             </button>
             <button
               className={`nav-link ${currentView === 'profile' ? 'active' : ''}`}
               onClick={() => setCurrentView('profile')}
+              title="Profile Settings"
             >
-              Profile
+              <Settings size={20} />
+              <span>Profile</span>
             </button>
-            <button className="nav-link logout" onClick={onLogout}>
-              Logout
+            <button className="nav-link logout" onClick={onLogout} title="Logout">
+              <LogOut size={20} />
+              <span>Logout</span>
             </button>
           </nav>
         )}
@@ -1197,3 +1231,4 @@ function SharedSummaryView({ summary }) {
 }
 
 export default App;
+export { AuthContext };
