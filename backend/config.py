@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     
     # Groq API (text generation)
     groq_api_key: str = ""
-    groq_model: str = "llama-3.1-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     
     # Opik Observability
     opik_api_key: str = ""
