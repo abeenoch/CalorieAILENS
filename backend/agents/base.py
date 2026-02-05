@@ -125,7 +125,7 @@ class BaseAgent(ABC):
     
     def parse_json_response(self, response: str) -> dict:
         """
-        Parse JSON from LLM response, handling markdown code blocks.
+        Parse JSON from LLM response, handling markdown code blocks and common malformations.
         
         Args:
             response: Raw text response from LLM
@@ -146,18 +146,38 @@ class BaseAgent(ABC):
         
         cleaned = cleaned.strip()
         
+        # Try direct parsing first
         try:
             return json.loads(cleaned)
-        except json.JSONDecodeError as e:
-            # Try to find JSON in the response
-            start_idx = cleaned.find("{")
-            end_idx = cleaned.rfind("}") + 1
-            if start_idx != -1 and end_idx > start_idx:
-                try:
-                    return json.loads(cleaned[start_idx:end_idx])
-                except json.JSONDecodeError:
-                    pass
-            raise Exception(f"Failed to parse JSON from {self.name}: {str(e)}\nResponse: {response[:500]}")
+        except json.JSONDecodeError:
+            pass
+        
+        # Try to find and extract JSON object
+        start_idx = cleaned.find("{")
+        end_idx = cleaned.rfind("}") + 1
+        
+        if start_idx != -1 and end_idx > start_idx:
+            json_part = cleaned[start_idx:end_idx]
+            
+            # Try parsing the extracted JSON
+            try:
+                return json.loads(json_part)
+            except json.JSONDecodeError:
+                pass
+            
+            # Fix common JSON issues
+            # Remove trailing commas before closing braces/brackets
+            json_part = json_part.replace(",}", "}")
+            json_part = json_part.replace(",]", "]")
+            
+            # Try again after fixing trailing commas
+            try:
+                return json.loads(json_part)
+            except json.JSONDecodeError:
+                pass
+        
+        # If all parsing attempts fail, raise error with context
+        raise Exception(f"Failed to parse JSON from {self.name}: Invalid JSON format\nResponse: {response[:500]}")
     
     @abstractmethod
     async def process(self, *args, **kwargs) -> dict:

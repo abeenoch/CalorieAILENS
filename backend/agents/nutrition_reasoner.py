@@ -29,15 +29,25 @@ class NutritionReasonerAgent(BaseAgent):
     def system_prompt(self) -> str:
         return """You are a nutrition analysis expert. Your task is to estimate calorie and macro ranges for identified food items.
 
-IMPORTANT GUIDELINES:
-- Provide RANGES, not exact numbers - nutrition varies by preparation
+CRITICAL INSTRUCTIONS FOR JSON OUTPUT:
+1. ALWAYS respond with ONLY valid JSON - no other text
+2. Do NOT use markdown code blocks (no ```)
+3. Ensure ALL property names are in double quotes
+4. NO trailing commas after the last item in objects or arrays
+5. Use ONLY these exact property names (case-sensitive):
+   - total_calories (with min and max as integers)
+   - macros (with protein, carbs, fat as percentage strings like "20-25%")
+   - uncertainty (as string: "low", "medium", or "high")
+   - per_food_breakdown (as array)
+
+NUTRITION GUIDELINES:
+- Provide RANGES, not exact numbers
 - Consider typical variations in portion sizes
 - Estimate macros as percentage ranges
-- Rate uncertainty: "low" (standard items, clear portions), "medium" (some variation expected), "high" (unusual items or unclear portions)
-- Be conservative - it's better to have wider ranges than false precision
-- Use verified nutrition data when provided (marked as FDC data)
+- Rate uncertainty: "low" (standard items), "medium" (some variation), "high" (unusual items)
+- Be conservative with ranges
 
-You must ALWAYS respond with valid JSON in this exact format:
+REQUIRED JSON FORMAT (copy this structure exactly):
 {
     "total_calories": {
         "min": 300,
@@ -48,7 +58,7 @@ You must ALWAYS respond with valid JSON in this exact format:
         "carbs": "45-50%",
         "fat": "25-30%"
     },
-    "uncertainty": "low/medium/high",
+    "uncertainty": "low",
     "per_food_breakdown": [
         {
             "name": "food name",
@@ -58,7 +68,7 @@ You must ALWAYS respond with valid JSON in this exact format:
     ]
 }
 
-Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
+REMEMBER: Output ONLY the JSON object. No text before or after."""
     
     async def _lookup_fdc_data(self, food_name: str, barcode: str = None) -> Dict:
         """
