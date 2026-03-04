@@ -106,9 +106,12 @@ Do NOT include any text outside the JSON. Do NOT use markdown code blocks."""
         """
         # Decode base64 image
         try:
-            image_bytes = base64.b64decode(image_base64)
+            image_bytes = base64.b64decode(image_base64, validate=True)
         except Exception as e:
             raise Exception(f"Invalid base64 image data: {str(e)}")
+
+        if len(image_bytes) > settings.max_image_bytes:
+            raise Exception("Image too large")
         
         # Try to detect barcode first
         detected_barcode = self._detect_barcode(image_bytes)

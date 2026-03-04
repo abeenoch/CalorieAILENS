@@ -11,8 +11,10 @@ from schemas import WeeklyExportResponse
 from auth import get_current_user
 from agents import MealAnalysisOrchestrator
 from agents.weekly_reflection import WeeklyReflectionAgent
+from config import get_settings
 
 router = APIRouter(prefix="/exports", tags=["Exports"])
+settings = get_settings()
 
 orchestrator = MealAnalysisOrchestrator()
 weekly_reflection_agent = WeeklyReflectionAgent()
@@ -217,8 +219,6 @@ async def get_weekly_summary(
     """
     monday, sunday = get_week_bounds()
     
-    print(f"DEBUG: Querying meals for user {current_user.id} between {monday} and {sunday}")
-    
     # Get meals for this week
     result = await db.execute(
         select(Meal).where(
@@ -230,8 +230,6 @@ async def get_weekly_summary(
         ).order_by(Meal.created_at)
     )
     meals = result.scalars().all()
-    
-    print(f"DEBUG: Found {len(meals)} meals for this week")
     
     # Calculate summary with AI insights
     summary_data = await calculate_weekly_summary(meals, current_user, db)
@@ -332,7 +330,54 @@ async def get_shared_summary(
             detail="Shared summary not found"
         )
     
+    expires_at = export.created_at + timedelta(days=settings.share_token_expire_days)
+    if datetime.utcnow() > expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Shared summary link has expired"
+        )
+
     return {
         "summary": export.summary_data,
-        "created_at": export.created_at.isoformat()
+        "created_at": export.created_at.isoformat(),
+        "expires_at": expires_at.isoformat()
+    }
+
+
+@router.get("/shared-data/{share_token}")
+async def get_shared_summary_data(
+    share_token: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    API endpoint to get shared summary data as JSON.
+    Called by the frontend after loading the share page.
+    """
+    result = await db.execute(
+        select(WeeklyExport).where(
+            and_(
+                WeeklyExport.share_token == share_token,
+                WeeklyExport.is_public == True
+            )
+        )
+    )
+    export = result.scalar_one_or_none()
+    
+    if not export:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shared summary not found"
+        )
+    
+    expires_at = export.created_at + timedelta(days=settings.share_token_expire_days)
+    if datetime.utcnow() > expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Shared summary link has expired"
+        )
+
+    return {
+        "summary": export.summary_data,
+        "created_at": export.created_at.isoformat(),
+        "expires_at": expires_at.isoformat()
     }

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
+from auth import validate_auth_settings
 from database import init_db
 from services.opik_service import init_opik
 from routers import auth, profile, analyze, feedback, balance, debug, metrics, notifications, exports
@@ -23,6 +24,9 @@ async def lifespan(app: FastAPI):
     # Initialize database
     await init_db()
     print("Database initialized")
+
+    # Validate security-critical settings at startup
+    validate_auth_settings()
     
     # Initialize Opik
     init_opik()
@@ -63,15 +67,15 @@ A multi-agent AI system for analyzing meals and providing supportive wellness gu
     """,
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None
 )
 
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  #
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,8 +90,9 @@ app.include_router(feedback.router)
 app.include_router(balance.router)
 app.include_router(notifications.router)
 app.include_router(exports.router)
-app.include_router(debug.router)
 app.include_router(metrics.router)
+if settings.enable_debug_routes:
+    app.include_router(debug.router)
 
 
 @app.get("/health", response_model=HealthCheck, tags=["Health"])

@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import List
 
 
 class Settings(BaseSettings):
@@ -25,10 +26,22 @@ class Settings(BaseSettings):
     # JWT Authentication
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 1440  # 24 hours
+    access_token_expire_minutes: int = 60
     
     # Database
     database_url: str = "sqlite+aiosqlite:///./calorie_tracker.db"
+
+    # Security hardening
+    enable_api_docs: bool = False
+    enable_debug_routes: bool = False
+    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    max_image_bytes: int = 5_000_000
+    max_history_limit: int = 100
+    share_token_expire_days: int = 30
+
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
     
     class Config:
         env_file = ".env"

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -60,7 +60,14 @@ class MealAnalysisRequest(BaseModel):
     image_data: str = Field(..., description="Base64 encoded image data")
     image_mime_type: str = Field(default="image/jpeg", description="MIME type of the image")
     context: Optional[str] = Field(None, description="Context: 'homemade', 'restaurant', 'snack', 'meal'")
-    notes: Optional[str] = Field(None, description="Additional notes about the meal")
+    notes: Optional[str] = Field(None, max_length=500, description="Additional notes about the meal")
+
+
+class BarcodeScanRequest(BaseModel):
+    """Schema for barcode scan request."""
+    barcode: str = Field(..., min_length=8, max_length=32, pattern=r"^[0-9]+$")
+    context: Optional[str] = Field(None, description="Context: 'packaged_food', 'snack', 'meal'")
+    notes: Optional[str] = Field(None, max_length=500, description="Additional notes about the meal")
 
 
 class FoodItem(BaseModel):
@@ -107,6 +114,7 @@ class MealAnalysisResponse(BaseModel):
     nutrition: NutritionResult
     personalization: PersonalizationResult
     wellness: WellnessResult
+    agents: Optional[Dict[str, Any]] = None
     confidence_score: str
     created_at: datetime
 
@@ -118,6 +126,7 @@ class MealHistoryItem(BaseModel):
     vision_result: Optional[dict]
     nutrition_result: Optional[dict]
     wellness_result: Optional[dict]
+    agent_results: Optional[dict] = None
     confidence_score: Optional[str]
     created_at: datetime
 

@@ -54,7 +54,9 @@ class MealAnalysisOrchestrator:
         context: Optional[str] = None,
         user_profile: Optional[dict] = None,
         daily_meals_so_far: Optional[List[dict]] = None,
-        historical_meals: Optional[List[dict]] = None
+        historical_meals: Optional[List[dict]] = None,
+        precomputed_vision_result: Optional[dict] = None,
+        precomputed_nutrition_result: Optional[dict] = None
     ) -> Dict:
         """
         Complete meal analysis pipeline.
@@ -66,6 +68,8 @@ class MealAnalysisOrchestrator:
             user_profile: User's profile data
             daily_meals_so_far: Previous meals today for daily balance
             historical_meals: Historical meals (last 30 days) for drift detection
+            precomputed_vision_result: Optional precomputed vision output (e.g., barcode path)
+            precomputed_nutrition_result: Optional precomputed nutrition output (e.g., barcode path)
             
         Returns:
             Complete analysis results from all agents
@@ -76,60 +80,71 @@ class MealAnalysisOrchestrator:
             "agents": {}
         }
         
-        try:
-            # Agent 1: Vision Interpreter
-            vision_result = await self.vision_agent.process(
-                image_base64=image_base64,
-                image_mime_type=image_mime_type,
-                context=context
-            )
-            results["agents"]["vision"] = vision_result
-            results["vision_result"] = vision_result
-            
-            # Check if barcode was detected
-            if vision_result.get("is_barcode_image") and vision_result.get("barcode_detected"):
-                barcode = vision_result.get("barcode_detected")
-                print(f"Barcode detected in image: {barcode}. Frontend should call /analyze/barcode endpoint.")
+        if precomputed_vision_result is not None:
+            results["agents"]["vision"] = precomputed_vision_result
+            results["vision_result"] = precomputed_vision_result
+            results["confidence_score"] = "high"
+            OpikMetrics.log_image_ambiguity(precomputed_vision_result.get("image_ambiguity", "low"))
+            OpikMetrics.log_confidence("high")
+        else:
+            try:
+                # Agent 1: Vision Interpreter
+                vision_result = await self.vision_agent.process(
+                    image_base64=image_base64,
+                    image_mime_type=image_mime_type,
+                    context=context
+                )
+                results["agents"]["vision"] = vision_result
+                results["vision_result"] = vision_result
                 
-                # Return barcode to frontend - let /barcode endpoint handle it
-                return {
-                    "barcode_detected": True,
-                    "barcode": barcode,
-                    "message": f"Barcode detected: {barcode}. Please use the barcode endpoint for analysis.",
-                    "next_action": "POST /analyze/barcode with barcode parameter"
-                }
-            
-            # Log metrics to Opik
-            OpikMetrics.log_image_ambiguity(vision_result.get("image_ambiguity", "unknown"))
-            
-            # Calculate overall confidence from foods
-            confidences = [f.get("confidence", "medium") for f in vision_result.get("foods", [])]
-            overall_confidence = calculate_overall_confidence(confidences)
-            
-            results["confidence_score"] = overall_confidence
-            OpikMetrics.log_confidence(overall_confidence)
-            
-        except Exception as e:
-            results["agents"]["vision"] = {"error": str(e)}
-            results["vision_result"] = {"foods": [], "image_ambiguity": "high", "error": str(e)}
-            results["confidence_score"] = "low"
+                # Check if barcode was detected
+                if vision_result.get("is_barcode_image") and vision_result.get("barcode_detected"):
+                    barcode = vision_result.get("barcode_detected")
+                    print(f"Barcode detected in image: {barcode}. Frontend should call /analyze/barcode endpoint.")
+                    
+                    # Return barcode to frontend - let /barcode endpoint handle it
+                    return {
+                        "barcode_detected": True,
+                        "barcode": barcode,
+                        "message": f"Barcode detected: {barcode}. Please use the barcode endpoint for analysis.",
+                        "next_action": "POST /analyze/barcode with barcode parameter"
+                    }
+                
+                # Log metrics to Opik
+                OpikMetrics.log_image_ambiguity(vision_result.get("image_ambiguity", "unknown"))
+                
+                # Calculate overall confidence from foods
+                confidences = [f.get("confidence", "medium") for f in vision_result.get("foods", [])]
+                overall_confidence = calculate_overall_confidence(confidences)
+                
+                results["confidence_score"] = overall_confidence
+                OpikMetrics.log_confidence(overall_confidence)
+                
+            except Exception as e:
+                results["agents"]["vision"] = {"error": str(e)}
+                results["vision_result"] = {"foods": [], "image_ambiguity": "high", "error": str(e)}
+                results["confidence_score"] = "low"
         
-        try:
-            # Agent 2: Nutrition Reasoner
-            nutrition_result = await self.nutrition_agent.process(
-                vision_result=results["vision_result"]
-            )
-            results["agents"]["nutrition"] = nutrition_result
-            results["nutrition_result"] = nutrition_result
-            
-        except Exception as e:
-            results["agents"]["nutrition"] = {"error": str(e)}
-            results["nutrition_result"] = {
-                "total_calories": {"min": 0, "max": 0},
-                "macros": {"protein": "N/A", "carbs": "N/A", "fat": "N/A"},
-                "uncertainty": "high",
-                "error": str(e)
-            }
+        if precomputed_nutrition_result is not None:
+            results["agents"]["nutrition"] = precomputed_nutrition_result
+            results["nutrition_result"] = precomputed_nutrition_result
+        else:
+            try:
+                # Agent 2: Nutrition Reasoner
+                nutrition_result = await self.nutrition_agent.process(
+                    vision_result=results["vision_result"]
+                )
+                results["agents"]["nutrition"] = nutrition_result
+                results["nutrition_result"] = nutrition_result
+                
+            except Exception as e:
+                results["agents"]["nutrition"] = {"error": str(e)}
+                results["nutrition_result"] = {
+                    "total_calories": {"min": 0, "max": 0},
+                    "macros": {"protein": "N/A", "carbs": "N/A", "fat": "N/A"},
+                    "uncertainty": "high",
+                    "error": str(e)
+                }
         
         try:
             # Agent 3: Personalization Agent
@@ -174,8 +189,18 @@ class MealAnalysisOrchestrator:
         meals_with_current = (daily_meals_so_far or []).copy()
         current_meal_entry = {
             "created_at": datetime.utcnow().isoformat(),
+            "time": datetime.utcnow().strftime("%H:%M"),
+            "date": datetime.utcnow().strftime("%Y-%m-%d"),
             "nutrition": results["nutrition_result"],
+            "nutrition_result": results["nutrition_result"],
+            "calories_estimate": (
+                (
+                    results["nutrition_result"].get("total_calories", {}).get("min", 0) +
+                    results["nutrition_result"].get("total_calories", {}).get("max", 0)
+                ) / 2
+            ) if results.get("nutrition_result") else 0,
             "vision": results["vision_result"],
+            "vision_result": results["vision_result"],
             "context": context
         }
         meals_with_current.append(current_meal_entry)

@@ -20,6 +20,14 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
+def validate_auth_settings() -> None:
+    """Fail fast on weak JWT configuration."""
+    if not settings.jwt_secret_key or len(settings.jwt_secret_key) < 32:
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set and at least 32 characters long."
+        )
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
     return pwd_context.verify(plain_password, hashed_password)

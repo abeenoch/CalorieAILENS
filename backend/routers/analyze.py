@@ -6,12 +6,14 @@ from sqlalchemy import select, and_
 
 from database import get_db
 from models import User, Meal
-from schemas import MealAnalysisRequest, MealAnalysisResponse, MealHistoryItem
+from schemas import MealAnalysisRequest, MealAnalysisResponse, MealHistoryItem, BarcodeScanRequest
 from auth import get_current_user
 from agents import MealAnalysisOrchestrator
 from services.fdc_service import FDCNutritionService
+from config import get_settings
 
 router = APIRouter(prefix="/analyze", tags=["Meal Analysis"])
+settings = get_settings()
 
 # Initialize orchestrator 
 orchestrator = MealAnalysisOrchestrator()
@@ -34,6 +36,12 @@ async def analyze_meal(
     
     All agent decisions are logged to Opik for observability.
     """
+    if len(request.image_data) > settings.max_image_bytes * 2:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image payload too large. Please upload a smaller image."
+        )
+
     # Get today's meals for context
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     result = await db.execute(
@@ -50,7 +58,15 @@ async def analyze_meal(
     daily_meals_so_far = [
         {
             "nutrition_result": meal.nutrition_result,
-            "created_at": meal.created_at.isoformat()
+            "created_at": meal.created_at.isoformat(),
+            "time": meal.created_at.strftime("%H:%M"),
+            "date": meal.created_at.strftime("%Y-%m-%d"),
+            "calories_estimate": (
+                (
+                    (meal.nutrition_result or {}).get("total_calories", {}).get("min", 0) +
+                    (meal.nutrition_result or {}).get("total_calories", {}).get("max", 0)
+                ) / 2
+            )
         }
         for meal in today_meals
     ]
@@ -73,7 +89,15 @@ async def analyze_meal(
             "nutrition_result": meal.nutrition_result,
             "vision_result": meal.vision_result,
             "created_at": meal.created_at.isoformat(),
-            "context": meal.context
+            "context": meal.context,
+            "time": meal.created_at.strftime("%H:%M"),
+            "date": meal.created_at.strftime("%Y-%m-%d"),
+            "calories_estimate": (
+                (
+                    (meal.nutrition_result or {}).get("total_calories", {}).get("min", 0) +
+                    (meal.nutrition_result or {}).get("total_calories", {}).get("max", 0)
+                ) / 2
+            )
         }
         for meal in historical_meals
     ]
@@ -98,10 +122,10 @@ async def analyze_meal(
             daily_meals_so_far=daily_meals_so_far,
             historical_meals=historical_meals_data
         )
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Analysis failed: {str(e)}"
+            detail="Analysis failed. Please try again."
         )
     
     # Store meal in database
@@ -115,6 +139,7 @@ async def analyze_meal(
         nutrition_result=analysis.get("nutrition_result"),
         personalization_result=analysis.get("personalization_result"),
         wellness_result=analysis.get("wellness_result"),
+        agent_results=analysis.get("agents"),
         confidence_score=analysis.get("confidence_score"),
         image_ambiguity=analysis.get("vision_result", {}).get("image_ambiguity")
     )
@@ -148,6 +173,7 @@ async def analyze_meal(
             "suggestions": analysis.get("wellness_result", {}).get("suggestions", []),
             "disclaimer_shown": True
         },
+        agents=analysis.get("agents"),
         confidence_score=analysis.get("confidence_score", "medium"),
         created_at=new_meal.created_at
     )
@@ -155,9 +181,7 @@ async def analyze_meal(
 
 @router.post("/barcode", response_model=MealAnalysisResponse)
 async def scan_barcode(
-    barcode: str,
-    context: Optional[str] = None,
-    notes: Optional[str] = None,
+    request: BarcodeScanRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -173,28 +197,23 @@ async def scan_barcode(
     
     This ensures packaged foods get the same personalized treatment as photo analysis.
     """
+    barcode = request.barcode
+    context = request.context
+    notes = request.notes
+
     try:
-        print(f"Barcode scan request: {barcode}")
-        
         # Look up product by barcode
         nutrition_data = await FDCNutritionService._search_open_food_facts_by_barcode(barcode)
         
         if not nutrition_data:
-            print(f"Barcode {barcode} not found in Open Food Facts")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Product with barcode {barcode} not found in Open Food Facts database. Try a different product or upload a food photo instead."
             )
         
-        print(f"Found product: {nutrition_data.get('food_name')}")
-        
         # Check if nutrition data is empty
         nutrition = nutrition_data.get("nutrition", {})
-        if not nutrition or nutrition.get("calories", 0) == 0:
-            print(f"Warning: Barcode {barcode} found but has no nutrition data")
-            print(f"Product: {nutrition_data.get('food_name')}")
-            print(f"Nutriments: {nutrition}")
-            # Continue anyway - user can still log the product
+        # Continue even if nutrition is sparse; users can still log the product.
         
         # Get today's meals for context
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -212,7 +231,15 @@ async def scan_barcode(
         daily_meals_so_far = [
             {
                 "nutrition_result": meal.nutrition_result,
-                "created_at": meal.created_at.isoformat()
+                "created_at": meal.created_at.isoformat(),
+                "time": meal.created_at.strftime("%H:%M"),
+                "date": meal.created_at.strftime("%Y-%m-%d"),
+                "calories_estimate": (
+                    (
+                        (meal.nutrition_result or {}).get("total_calories", {}).get("min", 0) +
+                        (meal.nutrition_result or {}).get("total_calories", {}).get("max", 0)
+                    ) / 2
+                )
             }
             for meal in today_meals
         ]
@@ -235,7 +262,15 @@ async def scan_barcode(
                 "nutrition_result": meal.nutrition_result,
                 "vision_result": meal.vision_result,
                 "created_at": meal.created_at.isoformat(),
-                "context": meal.context
+                "context": meal.context,
+                "time": meal.created_at.strftime("%H:%M"),
+                "date": meal.created_at.strftime("%Y-%m-%d"),
+                "calories_estimate": (
+                    (
+                        (meal.nutrition_result or {}).get("total_calories", {}).get("min", 0) +
+                        (meal.nutrition_result or {}).get("total_calories", {}).get("max", 0)
+                    ) / 2
+                )
             }
             for meal in historical_meals
         ]
@@ -293,38 +328,21 @@ async def scan_barcode(
             "source": "barcode_verified"
         }
         
-        # Run through personalization and wellness agents only
-        # (skip vision and nutrition since we have verified data)
-        try:
-            personalization_result = await orchestrator.personalization_agent.process(
-                nutrition_result=nutrition_result,
-                user_profile=user_profile,
-                daily_meals_so_far=daily_meals_so_far
-            )
-        except Exception as e:
-            print(f"Personalization error: {str(e)}")
-            personalization_result = {
-                "balance_status": "roughly_aligned",
-                "daily_context": "Barcode scanned successfully.",
-                "error": str(e)
-            }
-        
-        try:
-            wellness_result = await orchestrator.wellness_agent.process(
-                personalization_result=personalization_result,
-                nutrition_result=nutrition_result,
-                vision_result=vision_result
-            )
-        except Exception as e:
-            print(f"Wellness error: {str(e)}")
-            wellness_result = {
-                "message": f"Product logged: {nutrition_data.get('food_name')}. Great job tracking packaged foods!",
-                "emoji_indicator": "🟢",
-                "suggestions": [],
-                "disclaimer_shown": True,
-                "error": str(e)
-            }
-        
+        # Run full orchestrator with precomputed barcode outputs.
+        analysis = await orchestrator.analyze_meal(
+            image_base64="",  # unused when precomputed vision+nutrition are provided
+            image_mime_type="barcode",
+            context=context or "packaged_food",
+            user_profile=user_profile,
+            daily_meals_so_far=daily_meals_so_far,
+            historical_meals=historical_meals_data,
+            precomputed_vision_result=vision_result,
+            precomputed_nutrition_result=nutrition_result
+        )
+
+        personalization_result = analysis.get("personalization_result", {})
+        wellness_result = analysis.get("wellness_result", {})
+
         # Store meal in database
         new_meal = Meal(
             user_id=current_user.id,
@@ -332,32 +350,31 @@ async def scan_barcode(
             image_mime_type="barcode",
             context=context or "packaged_food",
             notes=notes or f"Barcode: {barcode} - {nutrition_data.get('food_name')}",
-            vision_result=vision_result,
-            nutrition_result=nutrition_result,
+            vision_result=analysis.get("vision_result", vision_result),
+            nutrition_result=analysis.get("nutrition_result", nutrition_result),
             personalization_result=personalization_result,
             wellness_result=wellness_result,
-            confidence_score="high",
-            image_ambiguity="low"
+            agent_results=analysis.get("agents"),
+            confidence_score=analysis.get("confidence_score", "high"),
+            image_ambiguity=analysis.get("vision_result", {}).get("image_ambiguity", "low")
         )
         
         db.add(new_meal)
         await db.commit()
         await db.refresh(new_meal)
         
-        print(f"Meal stored: {new_meal.id}")
-        
         # Build response
         return MealAnalysisResponse(
             meal_id=new_meal.id,
             vision={
-                "foods": vision_result.get("foods", []),
-                "image_ambiguity": "low",
-                "context_applied": context or "packaged_food"
+                "foods": analysis.get("vision_result", {}).get("foods", []),
+                "image_ambiguity": analysis.get("vision_result", {}).get("image_ambiguity", "low"),
+                "context_applied": analysis.get("vision_result", {}).get("context_applied", context or "packaged_food")
             },
             nutrition={
-                "total_calories": nutrition_result.get("total_calories", {"min": 0, "max": 0}),
-                "macros": nutrition_result.get("macros", {}),
-                "uncertainty": nutrition_result.get("uncertainty", "medium")
+                "total_calories": analysis.get("nutrition_result", {}).get("total_calories", {"min": 0, "max": 0}),
+                "macros": analysis.get("nutrition_result", {}).get("macros", {}),
+                "uncertainty": analysis.get("nutrition_result", {}).get("uncertainty", "medium")
             },
             personalization={
                 "balance_status": personalization_result.get("balance_status", "roughly_aligned"),
@@ -370,17 +387,17 @@ async def scan_barcode(
                 "suggestions": wellness_result.get("suggestions", []),
                 "disclaimer_shown": True
             },
-            confidence_score="high",
+            agents=analysis.get("agents"),
+            confidence_score=analysis.get("confidence_score", "high"),
             created_at=new_meal.created_at
         )
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Barcode analysis error: {str(e)}")
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Barcode analysis failed: {str(e)}"
+            detail="Barcode analysis failed. Please try again."
         )
 
 
@@ -406,6 +423,12 @@ async def get_meal_history(
     - context: Filter by meal context (homemade, restaurant, snack, meal)
     - food_name: Search by food name (partial match, case-insensitive)
     """
+    if limit < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="limit must be >= 1")
+    if offset < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="offset must be >= 0")
+    limit = min(limit, settings.max_history_limit)
+
     query = select(Meal).where(Meal.user_id == current_user.id)
     
     # Date range filtering
@@ -457,6 +480,7 @@ async def get_meal_history(
             vision_result=meal.vision_result,
             nutrition_result=meal.nutrition_result,
             wellness_result=meal.wellness_result,
+            agent_results=meal.agent_results,
             confidence_score=meal.confidence_score,
             created_at=meal.created_at
         )
@@ -497,6 +521,7 @@ async def get_meal_detail(
         "nutrition_result": meal.nutrition_result,
         "personalization_result": meal.personalization_result,
         "wellness_result": meal.wellness_result,
+        "agent_results": meal.agent_results,
         "confidence_score": meal.confidence_score,
         "image_ambiguity": meal.image_ambiguity,
         "created_at": meal.created_at

@@ -72,7 +72,7 @@ Always include: "No medical advice - just support from your wellness companion."
         intervention = self._generate_intervention(
             stress_level=signals["level"],
             indicators=signals["indicators"],
-            user_goal=user_data.get("user_goal", "")
+            user_goal=context.get("user_goal", "")
         )
         
         # Check tone

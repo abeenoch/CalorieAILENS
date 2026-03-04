@@ -48,6 +48,7 @@ class Meal(Base):
     nutrition_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     personalization_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     wellness_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    agent_results: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Full per-agent outputs (all 10 agents)
     
     # Metadata
     confidence_score: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "low", "medium", "high"

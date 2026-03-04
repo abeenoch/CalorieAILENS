@@ -86,8 +86,13 @@ export const analyzeAPI = {
         }),
 
     scanBarcode: (barcode, context, notes) =>
-        apiCall(`/analyze/barcode?barcode=${encodeURIComponent(barcode)}&context=${encodeURIComponent(context || '')}&notes=${encodeURIComponent(notes || '')}`, {
+        apiCall('/analyze/barcode', {
             method: 'POST',
+            body: JSON.stringify({
+                barcode,
+                context,
+                notes,
+            }),
         }),
 
     getHistory: (limit = 20, offset = 0, filters = {}) => {
@@ -157,7 +162,7 @@ export const exportsAPI = {
         }),
 
     getSharedSummary: (shareToken) =>
-        apiCall(`/exports/shared/${shareToken}`),
+        apiCall(`/exports/shared-data/${shareToken}`),
 };
 
 // Balance API
